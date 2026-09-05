@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "external: chama uma API externa real (não roda por padrão; ver tests/discovery/test_google_places_live.py)",
+]

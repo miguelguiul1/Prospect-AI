@@ -1,0 +1,58 @@
+# Ambiente de desenvolvimento local da Fase 0 — Foundation.
+#
+# Fica na raiz do repositório (não em infra/) de propósito, para que
+# `docker compose up` funcione diretamente a partir daqui, sem flag `-f`.
+# Ver infra/README.md para a justificativa completa dessa escolha.
+#
+# IMPORTANTE: este arquivo não foi executado nesta implementação porque a
+# máquina usada para a Fase 0 não tem Docker instalado. A sintaxe e as
+# variáveis foram revisadas manualmente, mas `docker compose up` ainda
+# precisa ser validado por alguém com Docker disponível antes de considerar
+# este critério de conclusão fechado. Ver README.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prospect}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prospect}
+      POSTGRES_DB: ${POSTGRES_DB:-prospect_ai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - prospect_ai_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prospect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-prospect}:${POSTGRES_PASSWORD:-prospect}@postgres:5432/${POSTGRES_DB:-prospect_ai}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+volumes:
+  prospect_ai_postgres_data:

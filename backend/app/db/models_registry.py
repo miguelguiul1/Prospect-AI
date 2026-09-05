@@ -1,0 +1,12 @@
+"""Importa todos os modelos para registrá-los em `Base.metadata`.
+
+O Alembic (`migrations/env.py`) importa este módulo antes de comparar o
+schema — sem isso, autogenerate só enxergaria os modelos que já tivessem
+sido importados por acaso em outro lugar do processo.
+"""
+from app.domains.audit.models import AuditSnapshot, WebsiteQuality  # noqa: F401
+from app.domains.companies.models import Category, Company, Region  # noqa: F401
+from app.domains.discovery.models import ProviderUsageRecord, SearchRun  # noqa: F401
+from app.domains.evidence.models import Evidence  # noqa: F401
+from app.domains.identity.models import CompanySource, IdentityMergeLog  # noqa: F401
+from app.domains.scoring.models import OpportunityScore  # noqa: F401
