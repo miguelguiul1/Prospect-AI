@@ -1,9 +1,9 @@
 # Prospect AI
 
-> **Fase 4 — Opportunity Score + Sales Brief.** Este README descreve o
-> estado real do projeto nesta fase. Discovery, Identity Resolution,
-> Digital Audit, Opportunity Score e Sales Brief estão implementados;
-> Dashboard/CRM/Prototype Builder ainda não.
+> **Fase 5 — Dashboard.** Este README descreve o estado real do projeto
+> nesta fase. Discovery, Identity Resolution, Digital Audit, Opportunity
+> Score, Sales Brief e o Dashboard (Next.js) estão implementados;
+> Prototype Builder/CRM ainda não.
 
 ## O que é
 
@@ -20,9 +20,9 @@ autorizadas.
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
 os agentes futuros e o roadmap de 8 fases. Este repositório implementa,
-até aqui, as **Fases 0, 1, 2, 3 e 4** desse roadmap.
+até aqui, as **Fases 0, 1, 2, 3, 4 e 5** desse roadmap.
 
-- `docs/architecture.md` — estado real da arquitetura após a Fase 4.
+- `docs/architecture.md` — estado real da arquitetura após a Fase 5.
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe.
@@ -35,7 +35,9 @@ até aqui, as **Fases 0, 1, 2, 3 e 4** desse roadmap.
   dimensões, pesos, classificação, confiança, limitações.
 - `docs/sales-brief.md` — o Sales Brief: arquitetura, provider de IA,
   grounding, defesa contra prompt injection, tratamento de falhas.
-- `docs/development.md` — como rodar, testar e migrar o backend.
+- `docs/dashboard.md` — o Dashboard (Next.js): arquitetura, rotas, APIs
+  consumidas/criadas, decisões de UX, segurança, testes, limitações.
+- `docs/development.md` — como rodar, testar e migrar backend e frontend.
 
 ## Stack
 
@@ -52,7 +54,7 @@ até aqui, as **Fases 0, 1, 2, 3 e 4** desse roadmap.
 | Opportunity Score | Determinístico, sem IA (`app.domains.scoring`) |
 | Sales Brief | Claude API (Anthropic Messages API via `httpx` puro — sem SDK novo) |
 | Logging | structlog (estruturado, com correlação por requisição) |
-| Frontend | Ainda não iniciado (ver `frontend/README.md`) |
+| Frontend | Next.js 16 (App Router) + TypeScript + Tailwind v4 + shadcn/ui (ver `docs/dashboard.md`) |
 
 ## Estrutura de diretórios
 
@@ -60,7 +62,7 @@ até aqui, as **Fases 0, 1, 2, 3 e 4** desse roadmap.
 backend/
   app/
     core/                 # configuração, logging, erros, middleware
-    api/routes/           # health, discovery, identity, audit, scoring, sales_brief
+    api/routes/           # health, discovery, identity, audit, scoring, sales_brief, companies
     db/                   # base declarativa, sessão, registro de modelos
     domains/
       discovery/          # DiscoveryQuery, normalização, service, jobs, cache
@@ -69,7 +71,8 @@ backend/
       audit/               # ssrf, http_client, html_signals, scoring, service, jobs
       scoring/             # Opportunity Score: ScoringContext, fórmula, service
       briefing/            # Sales Brief: prompt, schemas, providers/, service, jobs
-      companies/, evidence/
+      companies/           # models + queries.py (agregação de leitura do Dashboard)
+      evidence/
     jobs/                 # abstrações de job e conexão com a fila
   migrations/             # Alembic (5 migrations)
   tests/
@@ -78,9 +81,13 @@ backend/
     audit/                # testes do domínio audit (sem chamadas reais)
     scoring/              # testes do domínio scoring (puros + integração, sem IA)
     briefing/             # testes do domínio briefing (provider sempre mockado/fake)
-frontend/        # placeholder — dashboard é Fase 5
+    companies/             # testes das consultas/API agregada do Dashboard
+frontend/          # Dashboard (Next.js) — ver docs/dashboard.md e frontend/README.md
+  src/app/           # rotas (App Router)
+  src/components/    # ui/ (shadcn), badges/, layout/, dashboard/, prospects/, ...
+  src/lib/           # api/ (cliente HTTP server-only), format.ts
 infra/           # notas de infraestrutura
-docs/            # documentação de arquitetura, dados, discovery, identity, audit e desenvolvimento
+docs/            # documentação de arquitetura, dados, discovery, identity, audit, scoring, sales brief e dashboard
 docker-compose.yml
 ```
 
@@ -129,6 +136,21 @@ faz uma chamada de rede real — ver `docs/development.md`,
 `docs/discovery.md` e `docs/digital-audit.md` para o porquê e as
 implicações disso.
 
+### Rodando o Dashboard (frontend)
+
+Requer Node.js 20+ e o backend já no ar.
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Abre em `http://localhost:3000`. Ver `docs/dashboard.md` e
+`frontend/README.md` para detalhes, e `npm run test` (Vitest) para a
+suíte de testes do frontend.
+
 ## Endpoints
 
 ```
@@ -143,6 +165,11 @@ POST /api/scoring/{company_id}  → calcula/recalcula o Opportunity Score (ver d
 GET  /api/scoring/{company_id}  → consulta o Opportunity Score mais recente
 POST /api/sales-brief/{company_id} → gera um Sales Brief via IA (ver docs/sales-brief.md)
 GET  /api/sales-brief/{company_id} → consulta o Sales Brief mais recente
+GET  /api/discovery/runs        → lista pesquisas (paginado, filtro por status) — Fase 5
+GET  /api/companies             → lista/filtra/pagina empresas com auditoria e score embutidos — Fase 5
+GET  /api/companies/{id}        → agregação completa para a tela de detalhe do Dashboard — Fase 5
+GET  /api/companies/meta/stats  → KPIs do Dashboard, calculados em SQL — Fase 5
+GET  /api/companies/meta/filters → categorias/regiões em uso, para os filtros do Dashboard — Fase 5
 ```
 
 Exemplo — Discovery:
@@ -302,21 +329,52 @@ curl -X POST http://localhost:8000/api/sales-brief/<company_id>
   a chamada de IA em si sempre com um provider mockado, nunca uma chamada
   real à Anthropic. Ver `docs/sales-brief.md`.
 
+**Fase 5 — Dashboard**
+
+- **Interface Next.js (App Router)** consumindo só leitura + as ações HTTP
+  já existentes — nenhuma regra de negócio nova, nenhum cálculo de score/
+  qualidade duplicado no frontend. Todo acesso ao backend acontece em
+  Server Components/Server Actions, nunca no navegador — o browser só
+  conversa com o próprio Next.js.
+- **Visão geral** com KPIs reais (prospects, alta oportunidade, auditados,
+  score médio — todos calculados em SQL, nunca aproximados), oportunidades
+  prioritárias e pesquisas recentes.
+- **Prospects**: tabela paginada e filtrável (classificação, faixa de
+  score, presença de website, segmento, região, status de auditoria,
+  busca por nome) — filtros são uma URL real (`<form method="get">`),
+  compartilhável/atualizável no navegador.
+- **Detalhe do prospect**: identidade, descoberta (fontes), website,
+  Website Quality Score, Opportunity Score com breakdown explicável por
+  dimensão (valor, peso, contribuição, razão, evidência), evidências com
+  proveniência completa, e Sales Brief (com botão para gerar, chamando a
+  API real da Fase 4 — nunca uma resposta fabricada no frontend).
+- **Pesquisas**: histórico de `SearchRun` e formulário para iniciar uma
+  nova busca — nunca lista um provider de Discovery fictício.
+- Estados de loading (skeletons), vazio (com CTA apropriado) e erro
+  (mensagem amigável, nunca stack trace) tratados explicitamente em toda
+  tela. Ver `docs/dashboard.md`.
+- 4 endpoints novos de leitura agregada (`GET /api/companies`,
+  `GET /api/companies/{id}`, `GET /api/companies/meta/stats`,
+  `GET /api/companies/meta/filters`) + `GET /api/discovery/runs` (lista) —
+  todos só consultam, nenhum recalcula nada.
+
 **Migrations e testes**: 5 migrations Alembic aplicadas e testadas
 (schema inicial; execução de busca; resolução de identidade; auditoria
-digital; Opportunity Score e Sales Brief). **304 testes ao todo** (241 das
-Fases 0-3 + 63 novos da Fase 4 — pura fórmula de scoring, integração com
-banco, provider Anthropic com `httpx.MockTransport`, prompt/injeção,
-serviço de Sales Brief com provider fake, e API); 303 passam por padrão
-sem qualquer chamada de rede real, e 1 é o teste de integração real e
-opcional da Fase 1, ignorado por padrão.
+digital; Opportunity Score e Sales Brief — a Fase 5 não alterou o schema).
+**Backend: 339 testes ao todo** (304 das Fases 0-4 + 35 novos de
+`app.domains.companies`/`GET .../runs`); 338 passam por padrão sem
+qualquer chamada de rede real, e 1 é o teste de integração real e opcional
+da Fase 1, ignorado por padrão. **Frontend: 71 testes** (Vitest + React
+Testing Library) cobrindo componentes de apresentação e funções puras —
+ver `docs/dashboard.md`, seção "Testes", para o que fica de fora
+(Server Components assíncronos e chamadas de API reais) e por quê.
 
 ## O que NÃO está implementado ainda
 
 - Fusão de duas `Company` exposta por HTTP (existe e é testada só na
   camada de serviço — falta autenticação/autorização no sistema).
 - Consumo da fila de revisão humana do Identity Resolution — existe e é
-  populada; falta uma interface (Fase 5).
+  populada; falta uma interface dedicada.
 - Qualquer agente de IA multi-etapa ou framework de agentes (CrewAI,
   AutoGen, LangChain, LangGraph) — o Sales Brief é uma única chamada
   request/response a um provider de texto, não um agente.
@@ -330,8 +388,9 @@ opcional da Fase 1, ignorado por padrão.
   — a validação por resolução prévia existe; fixar a conexão TCP ao IP
   validado, não (ver `docs/digital-audit.md`).
 - Crawling: o Digital Audit analisa só a página inicial do candidato.
-- Prototype Builder e CRM.
-- Dashboard/frontend.
+- Autenticação/autorização, multi-tenant, atualização em tempo real no
+  Dashboard (sem WebSocket/polling — ver `docs/dashboard.md`).
+- Prototype Builder, CRM, outreach, billing.
 
 ## Limitações conhecidas
 
@@ -363,16 +422,25 @@ teve consequências práticas:
    de degradação graciosa sem chave configurada é, ele mesmo, o estado
    real desta máquina, e também foi validado de verdade (ver
    `docs/sales-brief.md`).
+7. **O Dashboard (Fase 5) foi validado com um build de produção real do
+   Next.js** (`npm run build && npm run start`) contra um backend real
+   nesta máquina — listagem, filtros, detalhe completo, nova pesquisa,
+   Sales Brief (mockado) e estados de erro/vazio, todos exercitados
+   manualmente. Um "soft 404" documentado (status HTTP 200 em vez de 404
+   ao abrir um prospect inexistente) é uma limitação conhecida do Next.js
+   App Router quando a rota tem um `loading.tsx` — a UI correta ainda
+   assim é exibida (ver `docs/dashboard.md`, seção "Limitações
+   conhecidas").
 
 Nenhuma decisão de arquitetura foi alterada por causa dessas limitações —
 são lacunas de validação de ambiente, documentadas para serem fechadas
 assim que houver Docker/Redis/uma chave de API/dados reais disponíveis,
 não mudanças de design. Ver `docs/development.md`, `docs/discovery.md`,
 `docs/identity-resolution.md`, `docs/digital-audit.md`,
-`docs/opportunity-scoring.md` e `docs/sales-brief.md` para o detalhe de
-cada uma.
+`docs/opportunity-scoring.md`, `docs/sales-brief.md` e `docs/dashboard.md`
+para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Fase 5 — Dashboard**, conforme o roadmap da arquitetura v0.2. Não inicia
-automaticamente: aguarda aprovação explícita.
+**Fase 6 — Prototype Builder**, conforme o roadmap da arquitetura v0.2.
+Não inicia automaticamente: aguarda aprovação explícita.

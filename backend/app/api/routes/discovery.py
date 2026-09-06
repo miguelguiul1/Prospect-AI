@@ -13,8 +13,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -92,3 +93,32 @@ def get_discovery_run(run_id: uuid.UUID, db: Session = Depends(get_db)) -> Searc
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return _to_response(search_run)
+
+
+class SearchRunListResponse(BaseModel):
+    items: list[SearchRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+@router.get("/runs", response_model=SearchRunListResponse)
+def list_discovery_runs(
+    db: Session = Depends(get_db),
+    status_filter: SearchRunStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> SearchRunListResponse:
+    """Lista `SearchRun` mais recentes primeiro — usado pela tela
+    "Pesquisas" do Dashboard (Fase 5). Somente leitura; nenhuma lógica de
+    execução nova (ver `create_discovery_search` acima, inalterado)."""
+    stmt = db.query(SearchRun)
+    if status_filter is not None:
+        stmt = stmt.filter(SearchRun.status == status_filter)
+
+    total = stmt.with_entities(func.count(SearchRun.id)).scalar() or 0
+    runs = stmt.order_by(SearchRun.created_at.desc()).limit(limit).offset(offset).all()
+
+    return SearchRunListResponse(
+        items=[_to_response(run) for run in runs], total=total, limit=limit, offset=offset
+    )

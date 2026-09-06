@@ -96,3 +96,50 @@ def test_search_run_returns_normalized_parameters(client, monkeypatch) -> None:
     parameters = response.json()["parameters"]
     assert parameters["region"] == "Interlagos"
     assert parameters["category"] == "Restaurantes"
+
+
+class TestListDiscoveryRuns:
+    """`GET /api/discovery/runs` — usado pela tela "Pesquisas" do Dashboard
+    (Fase 5). Só leitura; a execução em si continua sendo testada acima."""
+
+    def test_empty_list_without_any_run(self, client) -> None:
+        response = client.get("/api/discovery/runs")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["items"] == []
+        assert body["total"] == 0
+
+    def test_lists_most_recent_first(self, client) -> None:
+        client.post("/api/discovery/search", json=VALID_PAYLOAD)
+        client.post("/api/discovery/search", json={"region": "Centro", "category": "padarias"})
+
+        response = client.get("/api/discovery/runs")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 2
+        assert len(body["items"]) == 2
+        assert body["items"][0]["parameters"]["category"] == "padarias"
+
+    def test_filters_by_status(self, client) -> None:
+        client.post("/api/discovery/search", json=VALID_PAYLOAD)  # sem API key -> failed
+
+        response = client.get("/api/discovery/runs", params={"status": "failed"})
+        assert response.status_code == 200
+        assert response.json()["total"] == 1
+
+        response = client.get("/api/discovery/runs", params={"status": "completed"})
+        assert response.status_code == 200
+        assert response.json()["total"] == 0
+
+    def test_respects_limit_and_offset(self, client) -> None:
+        for category in ("a", "b", "c"):
+            client.post("/api/discovery/search", json={"region": "Centro", "category": category})
+
+        response = client.get("/api/discovery/runs", params={"limit": 1, "offset": 1})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 3
+        assert len(body["items"]) == 1

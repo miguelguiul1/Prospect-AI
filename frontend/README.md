@@ -1,14 +1,38 @@
-# Frontend
+# Prospect AI — Dashboard (Fase 5)
 
-Ainda não implementado.
+Interface Next.js (App Router) sobre a API do backend (`../backend/`,
+Fases 0-4). Ver **`../docs/dashboard.md`** para a arquitetura completa
+(Server Components/Server Actions, shadcn/ui, segurança, testes,
+limitações conhecidas).
 
-O prompt de implementação da Fase 0 pede apenas "bootstrap mínimo, se
-necessário" para o frontend — e nenhum dos critérios de conclusão da Fase 0
-depende de uma interface visual. Gerar um projeto Next.js vazio agora
-adicionaria uma árvore de dependências (Node) e uma superfície de
-manutenção sem nenhum código real para justificá-la, na contramão do
-princípio de "monólito modular" da arquitetura v0.2.
+## Rodando localmente
 
-O dashboard (fila de leads, relatório por empresa, revisão de duplicatas)
-é escopo da **Fase 5** do roadmap — ver `docs/architecture.md`. Ele será
-inicializado quando houver uma API real para consumir.
+Requer o backend já no ar (padrão: `http://localhost:8000`).
+
+```bash
+cp .env.example .env.local   # ajuste API_BASE_URL se necessário
+npm install
+npm run dev
+```
+
+Abre em `http://localhost:3000`.
+
+```bash
+npm run build && npm run start   # build de produção
+npm run lint                     # ESLint
+npm run test                     # Vitest
+```
+
+## Estrutura
+
+```
+src/
+  app/           # rotas (App Router): dashboard, prospects, pesquisas, configuracoes
+  components/    # ui/ (shadcn), badges/, layout/, dashboard/, prospects/,
+                 # prospect-detail/, discovery/, shared/
+  lib/           # api/ (cliente HTTP server-only + tipos), format.ts, utils.ts
+```
+
+Nenhuma API key (Google Maps, Anthropic) passa por este projeto — elas
+ficam exclusivamente em `backend/.env`; o frontend só conversa com o
+backend Python, nunca diretamente com um provider externo.

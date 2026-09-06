@@ -1,6 +1,6 @@
-# Arquitetura — estado real após a Fase 4
+# Arquitetura — estado real após a Fase 5
 
-Este documento resume a arquitetura tal como **implementada** até a Fase 4.
+Este documento resume a arquitetura tal como **implementada** até a Fase 5.
 Ele não substitui a análise completa de arquitetura (v0.2), que continua
 sendo a referência de decisão para as fases futuras — este arquivo existe
 para não deixar a documentação divergir do código à medida que ele avança.
@@ -33,6 +33,9 @@ Região + segmento
       │
       ▼
   Sales Brief            (Fase 4 — implementado: único componente com IA)
+      │
+      ▼
+  Dashboard              (Fase 5 — implementado: Next.js, só leitura + ações já existentes)
 ```
 
 A Fase 1 implementa o primeiro estágio real do pipeline: descoberta de
@@ -52,8 +55,12 @@ completo de cada uma.
   `POST /api/discovery/search`, `GET /api/discovery/runs/{run_id}`,
   `POST /api/identity/resolve`, `POST /api/audit/{company_id}`,
   `GET /api/audit/{company_id}`, `POST /api/scoring/{company_id}`,
-  `GET /api/scoring/{company_id}`, `POST /api/sales-brief/{company_id}` e
-  `GET /api/sales-brief/{company_id}`.
+  `GET /api/scoring/{company_id}`, `POST /api/sales-brief/{company_id}`,
+  `GET /api/sales-brief/{company_id}`, `GET /api/discovery/runs` (lista,
+  Fase 5), `GET /api/companies` (lista/filtros, Fase 5),
+  `GET /api/companies/{company_id}` (agregação completa, Fase 5),
+  `GET /api/companies/meta/stats` e `GET /api/companies/meta/filters`
+  (Fase 5).
 - Schema de banco completo para as entidades estruturais da v0.2, mais os
   campos de rastreabilidade de execução de busca (Fase 1), de resolução de
   identidade (Fase 2) e de auditoria digital (Fase 3) — ver `data-model.md`.
@@ -95,6 +102,12 @@ completo de cada uma.
   aplicadas e testadas (schema inicial; execução de busca; resolução de
   identidade; auditoria digital e Website Quality Score; Opportunity
   Score e Sales Brief).
+- **Dashboard funcional** (`frontend/`, Next.js): visão geral com KPIs
+  reais, listagem/filtro/paginação de prospects, detalhe completo por
+  empresa (identidade, descoberta, website, qualidade, score com
+  breakdown, evidências, sales brief), histórico e criação de pesquisas.
+  Consome só leitura + as ações HTTP já existentes — nenhuma regra de
+  negócio duplicada. Ver `docs/dashboard.md`.
 
 ## O que não existe ainda
 
@@ -114,7 +127,11 @@ completo de cada uma.
   (a validação de SSRF por resolução prévia existe; fixar a conexão TCP ao
   IP validado não — ver `docs/digital-audit.md`, seção "Segurança").
 - Crawling: o Digital Audit analisa só a página inicial do candidato.
-- Dashboard/frontend, Prototype Builder, CRM.
+- Autenticação/autorização (o Dashboard, Fase 5, é uma interface aberta
+  sobre o mesmo backend sem autenticação desde a Fase 0).
+- Atualização em tempo real no Dashboard (sem WebSocket/polling — ver
+  `docs/dashboard.md`).
+- Prototype Builder, CRM, outreach, billing.
 
 ## Stack
 
@@ -131,7 +148,7 @@ completo de cada uma.
 | Validação de SSRF | `ipaddress`/`socket` (biblioteca padrão) | Implementado |
 | Logging | structlog | Implementado |
 | Camada de raciocínio (LLM) | Claude API (Anthropic Messages API, via `httpx` puro) | Implementado — só no Sales Brief; sem chave real neste ambiente |
-| Frontend | Next.js (planejado) | Não iniciado |
+| Frontend | Next.js 16 (App Router) + TypeScript + Tailwind v4 + shadcn/ui | Implementado (Fase 5) |
 
 ## Desvio documentado: `WebsiteQuality` mora no domínio `audit`
 
@@ -183,8 +200,18 @@ removidos, não substituídos. Ver `docs/discovery.md` e
 - `OpportunityScore` ganhou `confidence`, `scoring_version` e `updated_at`
   — aditivo, sem remover nenhum campo existente.
 
+## Fase 5 — Dashboard
+
+Interface Next.js (App Router) somente de leitura + disparo das ações já
+existentes (nova pesquisa, rodar auditoria, calcular score, gerar sales
+brief) — nenhuma regra de negócio nova, nenhum cálculo de score/qualidade
+duplicado no frontend. Ver `docs/dashboard.md` para a arquitetura completa
+(Server Components/Server Actions, shadcn/ui, segurança, testes,
+limitações). Quatro endpoints novos, só leitura, em
+`app/api/routes/companies.py` + `GET /api/discovery/runs` (lista) — ver
+`docs/dashboard.md`, seção "API do backend usada/criada".
+
 ## Próxima fase
 
-**Fase 5 — Dashboard.** Interface para visualizar empresas descobertas,
-scores e briefings gerados, e para disparar manualmente auditoria/score/
-briefing. Não inicia automaticamente — aguarda aprovação explícita.
+**Fase 6 — Prototype Builder.** Não inicia automaticamente — aguarda
+aprovação explícita.

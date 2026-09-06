@@ -1,6 +1,6 @@
-# Guia de desenvolvimento — Fase 4
+# Guia de desenvolvimento — Fase 5
 
-## Ambiente em que as Fases 0-4 foram implementadas (e por que isso importa)
+## Ambiente em que as Fases 0-5 foram implementadas (e por que isso importa)
 
 A máquina usada tem **Python 3.14** e **Node**, mas **não tem Docker, WSL,
 PostgreSQL nem Redis instalados**. Isso foi verificado diretamente (não
@@ -42,10 +42,17 @@ consequências práticas, documentadas para quem continuar este projeto:
    caminho de degradação graciosa (sem chave configurada) também foi
    validado de verdade, já que é exatamente o estado real desta máquina.
    Ver `docs/sales-brief.md`.
+6. **O Dashboard (Fase 5) foi validado com um servidor Next.js de produção
+   real (`npm run build && npm run start`) apontando para um backend real**
+   nesta mesma máquina — não só em ambiente de desenvolvimento (`npm run
+   dev`). Ver `docs/dashboard.md` para a lista completa do que foi
+   exercitado manualmente (listagem, detalhe, filtros, nova pesquisa,
+   Sales Brief mockado, estados de erro/vazio, ausência de segredos nos
+   artefatos estáticos gerados).
 
 Se você tem Docker disponível, a validação completa (Postgres real, Redis
 real, `docker compose up`, um worker do RQ real) é o próximo passo
-recomendado antes de iniciar a Fase 4.
+recomendado antes de iniciar a Fase 6.
 
 ## Pré-requisitos
 
@@ -217,6 +224,29 @@ curl http://localhost:8000/api/sales-brief/<company_id>
 repositório sem necessidade** — cada chamada bem-sucedida é uma chamada
 paga de verdade à API da Anthropic.
 
+## Rodando o Dashboard (frontend) localmente
+
+Requer Node.js 20+ (testado com Node 24) e o backend já no ar (padrão:
+`http://localhost:8000`).
+
+```bash
+cd frontend
+cp .env.example .env.local   # ajuste API_BASE_URL se o backend não estiver em localhost:8000
+npm install
+npm run dev
+```
+
+Abre em `http://localhost:3000`. Nenhuma API key passa pelo frontend — ele
+só conversa com o backend Python, nunca diretamente com Google/Anthropic
+(ver `docs/dashboard.md`, seção "Segurança").
+
+```bash
+npm run build && npm run start   # build de produção
+npm run lint                     # ESLint
+npm run test                     # Vitest — ver docs/dashboard.md, seção "Testes",
+                                  # para o que fica de fora e por quê
+```
+
 ## Criando uma nova migration
 
 Sempre que um modelo em `app/domains/*/models.py` mudar:
@@ -236,7 +266,7 @@ especialmente para mudanças em `Enum` ou em constraints.
 backend/
   app/
     core/                  # config, logging, erros, middleware
-    api/routes/            # health, discovery, identity, audit, scoring, sales_brief
+    api/routes/            # health, discovery, identity, audit, scoring, sales_brief, companies
     db/                    # base declarativa, sessão, registro de modelos
     domains/
       discovery/           # DiscoveryQuery, DTO, normalização, service, jobs, cache
@@ -245,7 +275,8 @@ backend/
       audit/               # ssrf, http_client, html_signals, scoring, service, jobs (Fase 3)
       scoring/             # ScoringContext, compute_opportunity_score, service (Fase 4)
       briefing/            # prompt, schemas, providers/, service, jobs (Fase 4)
-      companies/, evidence/
+      companies/           # models + queries.py (agregação de leitura, Fase 5)
+      evidence/
     jobs/                  # abstrações de job e conexão com a fila
   migrations/              # Alembic (5 migrations)
   tests/
@@ -254,7 +285,13 @@ backend/
     audit/                 # testes do domínio audit (sem chamadas reais)
     scoring/               # testes do domínio scoring (puros + integração, sem IA)
     briefing/              # testes do domínio briefing (provider sempre mockado/fake)
-frontend/        # ainda não iniciado (ver frontend/README.md)
+    companies/             # testes das consultas/API agregada do Dashboard (Fase 5)
+frontend/          # Dashboard (Next.js, Fase 5) — ver docs/dashboard.md
+  src/
+    app/             # rotas (App Router): dashboard, prospects, pesquisas, configuracoes
+    components/      # ui/ (shadcn), badges/, layout/, dashboard/, prospects/,
+                     # prospect-detail/, discovery/, shared/
+    lib/             # api/ (cliente HTTP server-only + tipos), format.ts, utils.ts
 infra/           # notas de infraestrutura (o docker-compose.yml fica na raiz)
 docs/            # este diretório
 ```
