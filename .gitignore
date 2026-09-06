@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Ambiente/segredos — nunca versionar
+.env
+backend/.env
+*.env.local
+
+# Banco local / testes
+*.db
+*.sqlite3
+
+# Testes e cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node (frontend, quando existir)
+node_modules/
+.next/
+
+# Editor/SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
