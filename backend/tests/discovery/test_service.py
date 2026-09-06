@@ -137,7 +137,31 @@ class TestSuccessfulRun:
         assert "website" not in fields
 
     def test_multiple_results_create_multiple_companies(self, db_session: Session) -> None:
-        provider = FakeProvider([_page([_discovered("A1"), _discovered("A2"), _discovered("A3")])])
+        """Três resultados genuinamente distintos (telefone, site e endereço
+        diferentes, não só o external_id) devem virar três Companies — o
+        Identity Resolution da Fase 2 não deve fundi-los. Ver
+        tests/identity/test_service.py para os casos em que ele DEVE
+        reconhecer duplicatas."""
+        provider = FakeProvider(
+            [
+                _page(
+                    [
+                        _discovered(
+                            "A1", phone="+5511911111111", website="https://a1.example.com",
+                            formatted_address="Rua A, 1",
+                        ),
+                        _discovered(
+                            "A2", phone="+5511922222222", website="https://a2.example.com",
+                            formatted_address="Rua B, 2",
+                        ),
+                        _discovered(
+                            "A3", phone="+5511933333333", website="https://a3.example.com",
+                            formatted_address="Rua C, 3",
+                        ),
+                    ]
+                )
+            ]
+        )
         service = DiscoveryService(db_session, settings=_settings_no_cost(), provider=provider)
 
         search_run = service.start_run(_query())

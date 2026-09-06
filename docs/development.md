@@ -1,12 +1,12 @@
-# Guia de desenvolvimento — Fase 1
+# Guia de desenvolvimento — Fase 2
 
-## Ambiente em que Fase 0 e Fase 1 foram implementadas (e por que isso importa)
+## Ambiente em que as Fases 0-2 foram implementadas (e por que isso importa)
 
 A máquina usada tem **Python 3.14** e **Node**, mas **não tem Docker, WSL,
 PostgreSQL nem Redis instalados**. Isso foi verificado diretamente (não
 presumido) antes de começar a Fase 0, e o usuário optou explicitamente por
-não instalar nada disso. A Fase 1 herda a mesma limitação — consequências
-práticas, documentadas para quem continuar este projeto:
+não instalar nada disso. As Fases 1 e 2 herdam a mesma limitação —
+consequências práticas, documentadas para quem continuar este projeto:
 
 1. **Os testes automatizados rodam contra SQLite**, não PostgreSQL. O
    Alembic aplica a migration real (`alembic upgrade head`) contra um
@@ -125,6 +125,22 @@ Sem `GOOGLE_MAPS_API_KEY` configurada, a chamada continua respondendo
 nunca um 500. Ver `docs/discovery.md` para o fluxo completo, os limites
 internos e o teste opcional contra a API real.
 
+## Inspecionando uma decisão de Identity Resolution
+
+`POST /api/identity/resolve` é só leitura — não precisa de uma busca de
+Discovery rodando, nem de API key nenhuma:
+
+```bash
+curl -X POST http://localhost:8000/api/identity/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"source": "openstreetmap", "external_id": "node/1", "name": "REST. SAO JOAO", "phone": "+5511987654321"}'
+```
+
+Devolve a decisão (`match`/`no_match`/`inconclusive`), a confiança, as
+razões e, se houver, o `matched_company_id` — sem persistir nada. Ver
+`docs/identity-resolution.md` para os sinais usados e os limiares
+configuráveis.
+
 ## Criando uma nova migration
 
 Sempre que um modelo em `app/domains/*/models.py` mudar:
@@ -144,16 +160,18 @@ especialmente para mudanças em `Enum` ou em constraints.
 backend/
   app/
     core/                  # config, logging, erros, middleware
-    api/routes/            # health, discovery
+    api/routes/            # health, discovery, identity
     db/                    # base declarativa, sessão, registro de modelos
     domains/
       discovery/           # DiscoveryQuery, DTO, normalização, service, jobs, cache
         providers/         # contrato + GooglePlacesProvider
-      companies/, identity/, evidence/, audit/, scoring/, briefing/
+      identity/            # matching, profile, service (Fase 2)
+      companies/, evidence/, audit/, scoring/, briefing/
     jobs/                  # abstrações de job e conexão com a fila
-  migrations/              # Alembic
+  migrations/              # Alembic (3 migrations)
   tests/
     discovery/             # testes do domínio discovery (sem chamadas reais)
+    identity/              # testes do domínio identity (sem chamadas reais)
 frontend/        # ainda não iniciado (ver frontend/README.md)
 infra/           # notas de infraestrutura (o docker-compose.yml fica na raiz)
 docs/            # este diretório

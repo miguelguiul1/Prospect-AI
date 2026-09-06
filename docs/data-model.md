@@ -1,9 +1,10 @@
-# Modelo de dados — Fase 1
+# Modelo de dados — Fase 2
 
 Reflete exatamente o schema criado pelas migrations
-`backend/migrations/versions/0001_initial_schema.py` (Fase 0) e
-`0002_discovery_search_run_details.py` (Fase 1), geradas a partir dos
-modelos em `backend/app/domains/*/models.py`.
+`backend/migrations/versions/0001_initial_schema.py` (Fase 0),
+`0002_discovery_search_run_details.py` (Fase 1) e
+`0003_identity_resolution.py` (Fase 2), geradas a partir dos modelos em
+`backend/app/domains/*/models.py`.
 
 ## Tabelas
 
@@ -12,14 +13,15 @@ modelos em `backend/app/domains/*/models.py`.
 | `companies` | companies | Identidade interna da empresa. **Não tem nenhuma coluna de identificador externo.** |
 | `regions` | companies | Região geográfica normalizada. |
 | `categories` | companies | Categoria/segmento normalizado. |
-| `company_sources` | identity | Vínculo entre uma `Company` e uma fonte externa. `UNIQUE(source, external_id)`. |
-| `identity_merge_logs` | identity | Histórico de fusões/reversões de identidade entre duas `Company`. |
+| `company_sources` | identity | Vínculo entre uma `Company` e uma fonte externa. `UNIQUE(source, external_id)`. **Alterada na Fase 2** — ganhou `latitude`/`longitude`. |
+| `identity_merge_logs` | identity | Histórico de fusões/reversões de identidade entre duas `Company` já existentes. |
+| `dedup_candidates` | identity | **Nova na Fase 2.** Toda decisão não trivial de Identity Resolution — auditoria e fila de revisão humana. |
 | `evidence` | evidence | Fato individual com proveniência, append-only. |
 | `audit_snapshots` | audit | Uma execução de auditoria sobre uma `Company`. |
 | `website_quality_snapshots` | audit | Placeholder 1:1 com `audit_snapshots` para o Website Quality Score futuro. |
 | `opportunity_scores` | scoring | Placeholder 1:1 com `audit_snapshots` para o Opportunity Score futuro. |
-| `search_runs` | discovery | Uma execução de descoberta: critérios, status e contadores de resultado. **Alterada na Fase 1** — ver abaixo. |
-| `provider_usage_records` | discovery | **Nova na Fase 1.** Uma linha por chamada real a um provider externo — base do rastreamento de custo. |
+| `search_runs` | discovery | Uma execução de descoberta: critérios, status e contadores de resultado. |
+| `provider_usage_records` | discovery | Uma linha por chamada real a um provider externo — base do rastreamento de custo. |
 
 ## Por que `Company` não tem `place_id`
 
@@ -49,7 +51,8 @@ job de Discovery/Identity Resolution), não no banco.
 
 Todos os `Enum` do SQLAlchemy usados neste schema (`CompanyStatus`,
 `ConfidenceLevel`, `EvidenceMethod`, `DataState`, `OpportunityTier`,
-`SearchRunStatus`) são declarados com `native_enum=False`. Isso os
+`SearchRunStatus`, e os dois novos da Fase 2 — `MatchDecision` e
+`DedupCandidateStatus`) são declarados com `native_enum=False`. Isso os
 armazena como `VARCHAR` (com validação do lado da aplicação) em vez de um
 tipo `ENUM` nativo do PostgreSQL. A troca é deliberada: adicionar um novo
 valor a um `ENUM` nativo do Postgres exige `ALTER TYPE`, uma operação mais
@@ -68,12 +71,17 @@ ter um `value`. Isso cobre dois casos com a mesma estrutura:
 - O resultado de uma checagem sem valor (ex.:
   `field="website", value=None, state=INCONCLUSIVE"`).
 
-Nenhuma lógica de "resolver o valor atual de um campo" (por confiança +
-recência) foi implementada — isso pertence à Fase 3, quando o Digital
-Auditor de fato precisar consumir esse histórico. A Fase 0 só garante que
-a estrutura suporta o padrão append-only:
-`Evidence.mark_superseded_by()` aponta a linha antiga para a nova via
-`superseded_by_id`, sem jamais editar `value`/`state` no lugar.
+Nenhuma lógica de "resolver o valor atual de um campo" **por confiança e
+recência entre fontes conflitantes** foi implementada — isso continua
+reservado para a Fase 3 (Digital Auditor), que vai precisar decidir entre
+valores concorrentes com pesos de confiança. O que a Fase 2 adicionou
+(`app/domains/evidence/queries.py::get_current_evidence`) é mais simples:
+como só existe uma `Evidence` não superada por `(company_id, field)` a
+qualquer momento — cada novo valor supera o anterior via
+`Evidence.mark_superseded_by()` — buscar "o valor atual" nunca tem empate
+para resolver. Essa função é reaproveitada tanto pela persistência do
+Discovery quanto pelo Identity Resolution (que precisa saber o telefone/
+site/endereço atual de uma empresa para comparar contra um candidato).
 
 ## `AuditSnapshot`, `WebsiteQuality`, `OpportunityScore`: relação 1:1 com uma execução, não com a empresa
 
@@ -84,16 +92,22 @@ dois se relaciona diretamente com `companies`: isso é o que preserva o
 histórico de como a pontuação de uma empresa mudou ao longo do tempo, em
 vez de sobrescrever um único campo em `Company`.
 
-## Tabelas que a v0.2 descreve mas a Fase 0 não cria
+## `dedup_candidates` (Fase 2): uma tabela para dois papéis
 
-`DedupCandidate` existe na arquitetura v0.2 (fila de revisão humana para
-casos ambíguos de deduplicação), mas **não foi criada nesta fase**: o
-prompt de implementação da Fase 0 lista explicitamente as entidades
-esperadas (`Company`, `CompanySource`, `Evidence`, `AuditSnapshot`,
-`WebsiteQuality`, `OpportunityScore`, `SearchRun`, `IdentityMergeLog`) e
-`DedupCandidate` não está entre elas — corretamente, já que a lógica que a
-usaria (correspondência difusa, fila de revisão) é escopo da Fase 2. Ela
-será adicionada quando a Identity Resolution for implementada.
+A arquitetura v0.2 previa `DedupCandidate` como fila de revisão humana
+para casos ambíguos, separada de um log de auditoria — a Fase 0/1 adiou
+sua criação exatamente para a Fase 2. Implementada agora, ela cobre os
+dois papéis numa única tabela, em vez de duas: toda decisão não trivial
+de Identity Resolution (`MATCH`, `NO_MATCH` ou `INCONCLUSIVE`) vira uma
+linha, com `status=auto_resolved` para as duas primeiras e
+`status=pending_review` só para `INCONCLUSIVE` — a fila de revisão é
+literalmente o filtro por esse status, não uma tabela à parte. Ver
+`docs/identity-resolution.md` para o desenho completo e o porquê.
+
+`IdentityMergeLog` continua com seu papel original e inalterado: histórico
+de fusão entre duas `Company` **já existentes** como registros separados
+— um cenário diferente de "associar uma fonte nova a uma empresa
+existente", que nunca envolve uma segunda `Company` já persistida.
 
 ## `search_runs`: de intenção a execução rastreável (Fase 1)
 
@@ -117,6 +131,19 @@ chamadas com custo potencialmente somável. `estimated_cost` fica nulo
 quando nenhum preço foi configurado (`Settings.discovery_cost_per_request`)
 — o sistema sempre sabe *quantas* chamadas fez, mesmo sem saber quanto
 cada uma custou.
+
+## `company_sources.latitude`/`longitude` (Fase 2)
+
+Coordenadas pertencem à fonte, não à `Company` — o mesmo espírito de
+`source_url`: é um dado que uma fonte específica reportou, não um atributo
+canônico da empresa (fontes diferentes podem discordar ligeiramente, ou
+uma pode não reportar coordenada nenhuma). Usadas como sinal de apoio pelo
+Identity Resolution (`app/domains/identity/profile.py`), nunca como
+critério isolado — ver `docs/identity-resolution.md`. Sem PostGIS: são
+colunas `Float` simples, e a distância é calculada em Python
+(Haversine), não numa consulta espacial do banco — a arquitetura oficial
+continua sendo PostgreSQL simples, sem a extensão PostGIS provisionada em
+nenhum ambiente deste projeto.
 
 ## Por que a Region/Category de uma empresa vem da busca, não do resultado
 

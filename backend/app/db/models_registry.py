@@ -8,5 +8,9 @@ from app.domains.audit.models import AuditSnapshot, WebsiteQuality  # noqa: F401
 from app.domains.companies.models import Category, Company, Region  # noqa: F401
 from app.domains.discovery.models import ProviderUsageRecord, SearchRun  # noqa: F401
 from app.domains.evidence.models import Evidence  # noqa: F401
-from app.domains.identity.models import CompanySource, IdentityMergeLog  # noqa: F401
+from app.domains.identity.models import (  # noqa: F401
+    CompanySource,
+    DedupCandidate,
+    IdentityMergeLog,
+)
 from app.domains.scoring.models import OpportunityScore  # noqa: F401

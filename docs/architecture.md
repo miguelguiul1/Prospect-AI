@@ -1,6 +1,6 @@
-# Arquitetura — estado real após a Fase 1
+# Arquitetura — estado real após a Fase 2
 
-Este documento resume a arquitetura tal como **implementada** até a Fase 1.
+Este documento resume a arquitetura tal como **implementada** até a Fase 2.
 Ele não substitui a análise completa de arquitetura (v0.2), que continua
 sendo a referência de decisão para as fases futuras — este arquivo existe
 para não deixar a documentação divergir do código à medida que ele avança.
@@ -17,7 +17,7 @@ Região + segmento
   Discovery             (Fase 1 — implementado: provider Google Places)
       │
       ▼
-  Identity Resolution   (Fase 2 — não implementado; estrutura de dados existe)
+  Identity Resolution   (Fase 2 — implementado: matching + DedupCandidate)
       │
       ▼
   Digital Audit         (Fase 3 — não implementado; estrutura de dados existe)
@@ -34,44 +34,64 @@ Região + segmento
 
 A Fase 1 implementa o primeiro estágio real do pipeline: descoberta de
 candidatos por uma fonte externa, normalização e persistência rastreável.
-Ela **não** decide identidade definitiva entre registros de fontes
-diferentes (Fase 2) nem avalia presença digital ou oportunidade (Fases 3
-e 4) — ver `docs/discovery.md` para o detalhamento completo.
+A Fase 2 adiciona o segundo estágio: decidir se um candidato inédito é uma
+empresa já conhecida (por outra fonte) ou uma empresa nova. Nenhuma das
+duas avalia presença digital ou oportunidade (Fases 3 e 4) — ver
+`docs/discovery.md` e `docs/identity-resolution.md` para o detalhamento
+completo.
 
 ## O que existe hoje
 
 - API HTTP (FastAPI) com `/health`, `/health/dependencies`,
-  `POST /api/discovery/search` e `GET /api/discovery/runs/{run_id}`.
+  `POST /api/discovery/search`, `GET /api/discovery/runs/{run_id}` e
+  `POST /api/identity/resolve`.
 - Schema de banco completo para as entidades estruturais da v0.2, mais os
-  campos de rastreabilidade de execução de busca introduzidos na Fase 1
-  (ver `data-model.md`).
+  campos de rastreabilidade de execução de busca (Fase 1) e de resolução
+  de identidade (Fase 2) — ver `data-model.md`.
 - **Discovery funcional**: provider da Google Places API (New) (Text
   Search e Nearby Search), com timeout, retry limitado com backoff, rate
   limit tratado, paginação, cache best-effort e rastreamento de custo por
   chamada. Ver `docs/discovery.md`.
+- **Identity Resolution funcional**: um candidato inédito (`source`+
+  `external_id` nunca visto) é comparado contra empresas já existentes por
+  telefone, site oficial, nome, endereço, região e proximidade geográfica
+  antes de decidir entre reaproveitar uma `Company` existente ou criar uma
+  nova. Toda decisão não trivial fica auditada em `DedupCandidate`; casos
+  ambíguos ficam marcados para revisão humana futura, nunca fundidos
+  automaticamente. Ver `docs/identity-resolution.md`.
 - Camada de configuração centralizada (`app/core/config.py`), lendo
   exclusivamente de variáveis de ambiente — agora incluindo as
-  configurações de Discovery.
+  configurações de Discovery e de Identity Resolution.
 - Logging estruturado com correlação por requisição
   (`app/core/logging.py`, `app/core/middleware.py`).
 - Tratamento de erro consistente (`app/core/errors.py`).
-- Abstração de job (`app/jobs/`) agora com um job real (`DiscoveryJob`),
-  com fallback síncrono documentado quando o Redis está indisponível.
-- Migrations Alembic geradas a partir dos modelos, com duas migrations
-  aplicadas e testadas (schema inicial + detalhes de execução de busca).
+- Abstração de job (`app/jobs/`) com um job real (`DiscoveryJob`), com
+  fallback síncrono documentado quando o Redis está indisponível.
+- Migrations Alembic geradas a partir dos modelos, com três migrations
+  aplicadas e testadas (schema inicial; detalhes de execução de busca;
+  resolução de identidade — `dedup_candidates` e coordenadas em
+  `company_sources`).
 
 ## O que não existe ainda
 
-- Identity Resolution: nenhuma fusão automática entre `CompanySource` de
-  fontes diferentes, nenhuma fila `DedupCandidate` (ainda não criada —
-  ver `data-model.md`).
+- Fusão de duas `Company` já existentes exposta por HTTP: a capacidade
+  (`IdentityResolutionService.merge_companies`) existe e é testada na
+  camada de serviço, mas não há endpoint — este sistema ainda não tem
+  autenticação/autorização, e expor um merge irreversível sem controle de
+  acesso seria descuidado. Ver `docs/identity-resolution.md`.
+- Consumo da fila de revisão humana (`DedupCandidate.status=
+  pending_review`) — a tabela existe e é populada; uma interface para
+  revisá-la é trabalho de fase futura (dashboard).
 - Qualquer checagem real de presença digital (site, redes sociais) além
   do que a própria Google Places já retorna como campo estruturado.
 - Qualquer cálculo de Website Quality Score ou Opportunity Score.
-- Qualquer agente de IA (nenhuma chamada à API da Anthropic é feita — o
-  próprio Discovery é inteiramente determinístico, sem síntese textual).
+- Qualquer agente de IA (nenhuma chamada à API da Anthropic é feita — tanto
+  Discovery quanto Identity Resolution são inteiramente determinísticos,
+  sem síntese textual).
 - Providers além do Google Places (OpenStreetMap fica documentado como
   extensão futura — ver `docs/discovery.md`).
+- PostGIS — distância geográfica calculada em Python (Haversine), não em
+  consulta espacial do banco. Ver `docs/identity-resolution.md`.
 - Dashboard/frontend.
 - Prototype Builder e CRM.
 
@@ -85,6 +105,7 @@ e 4) — ver `docs/discovery.md` para o detalhamento completo.
 | Fila | Redis + RQ | Conexão pronta; `DiscoveryJob` implementado, com fallback síncrono quando o Redis está indisponível |
 | Cliente HTTP externo | httpx (timeout + retry manual) | Implementado (`GooglePlacesProvider`) |
 | Normalização de telefone | `phonenumbers` | Implementado |
+| Similaridade de texto (matching) | `RapidFuzz` | Implementado (`app/domains/identity/matching.py`) |
 | Logging | structlog | Implementado |
 | Camada de raciocínio (LLM) | Claude API | Não integrada — reservada nas configs |
 | Frontend | Next.js (planejado) | Não iniciado |
@@ -118,8 +139,8 @@ SQLite" (que a Fase 0 já havia recusado a fazer).
 
 ## Próxima fase
 
-**Fase 2 — Identity Resolution + deduplicação.** Implementar as regras de
-correspondência entre `CompanySource` (sinais fortes/médios/fracos,
-conforme a arquitetura v0.2, seção 13) e a fila de revisão humana
-(`DedupCandidate`, ainda não criada). Não inicia automaticamente — aguarda
-aprovação explícita.
+**Fase 3 — Digital Audit + Website Quality.** Implementar a checagem real
+de presença digital (existência de site próprio, redes sociais) e os
+sinais determinísticos de qualidade de site, preenchendo os placeholders
+`AuditSnapshot`/`WebsiteQuality` já existentes desde a Fase 0. Não inicia
+automaticamente — aguarda aprovação explícita.

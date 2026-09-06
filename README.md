@@ -1,9 +1,9 @@
 # Prospect AI
 
-> **Fase 1 — Discovery.** Este README descreve o estado real do projeto
-> nesta fase. Discovery (descoberta de empresas via Google Places) está
-> implementado; Identity Resolution, Digital Audit, pontuação de
-> oportunidade e geração de briefing ainda não.
+> **Fase 2 — Identity Resolution + Deduplicação.** Este README descreve o
+> estado real do projeto nesta fase. Discovery e Identity Resolution estão
+> implementados; Digital Audit, pontuação de oportunidade e geração de
+> briefing ainda não.
 
 ## O que é
 
@@ -20,13 +20,16 @@ autorizadas.
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
 os agentes futuros e o roadmap de 8 fases. Este repositório implementa,
-até aqui, as **Fases 0 e 1** desse roadmap.
+até aqui, as **Fases 0, 1 e 2** desse roadmap.
 
-- `docs/architecture.md` — estado real da arquitetura após a Fase 1.
+- `docs/architecture.md` — estado real da arquitetura após a Fase 2.
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe: fluxo,
   provider, FieldMask, erros, custos, limites, testes.
+- `docs/identity-resolution.md` — o domínio de Identity Resolution em
+  detalhe: sinais de matching, estados de decisão, merge de empresas,
+  limitações, testes.
 - `docs/development.md` — como rodar, testar e migrar o backend.
 
 ## Stack
@@ -39,6 +42,7 @@ até aqui, as **Fases 0 e 1** desse roadmap.
 | Fila | Redis + RQ (com fallback síncrono documentado — ver `docs/discovery.md`) |
 | Cliente HTTP externo | httpx, com timeout e retry limitado |
 | Fonte de descoberta | Google Places API (New) |
+| Similaridade de texto | RapidFuzz (matching de identidade) |
 | Logging | structlog (estruturado, com correlação por requisição) |
 | Frontend | Ainda não iniciado (ver `frontend/README.md`) |
 
@@ -48,19 +52,21 @@ até aqui, as **Fases 0 e 1** desse roadmap.
 backend/
   app/
     core/                 # configuração, logging, erros, middleware
-    api/routes/           # health, discovery
+    api/routes/           # health, discovery, identity
     db/                   # base declarativa, sessão, registro de modelos
     domains/
       discovery/          # DiscoveryQuery, normalização, service, jobs, cache
         providers/        # contrato DiscoveryProvider + GooglePlacesProvider
-      companies/, identity/, evidence/, audit/, scoring/, briefing/
+      identity/           # matching, profile, service (Identity Resolution)
+      companies/, evidence/, audit/, scoring/, briefing/
     jobs/                 # abstrações de job e conexão com a fila
-  migrations/             # Alembic (2 migrations)
+  migrations/             # Alembic (3 migrations)
   tests/
     discovery/            # testes do domínio discovery (sem chamadas reais)
+    identity/             # testes do domínio identity (sem chamadas reais)
 frontend/        # placeholder — dashboard é Fase 5
 infra/           # notas de infraestrutura
-docs/            # documentação de arquitetura, dados, discovery e desenvolvimento
+docs/            # documentação de arquitetura, dados, discovery, identity e desenvolvimento
 docker-compose.yml
 ```
 
@@ -115,14 +121,23 @@ GET  /health                    → {"status": "ok", "service": "Prospect AI", "
 GET  /health/dependencies       → {"status": "ok"|"degraded", "checks": {"database": "...", "redis": "..."}}
 POST /api/discovery/search      → cria e executa uma busca de descoberta (ver docs/discovery.md)
 GET  /api/discovery/runs/{id}   → consulta o estado de uma execução
+POST /api/identity/resolve      → decide (sem persistir) se um candidato bate com uma empresa existente
 ```
 
-Exemplo:
+Exemplo — Discovery:
 
 ```bash
 curl -X POST http://localhost:8000/api/discovery/search \
   -H "Content-Type: application/json" \
   -d '{"region": "Interlagos", "city": "São Paulo", "category": "restaurantes", "max_results": 5}'
+```
+
+Exemplo — Identity Resolution:
+
+```bash
+curl -X POST http://localhost:8000/api/identity/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"source": "openstreetmap", "external_id": "node/1", "name": "REST. SAO JOAO", "phone": "+5511987654321"}'
 ```
 
 ## O que está implementado
@@ -133,8 +148,8 @@ curl -X POST http://localhost:8000/api/discovery/search \
 - Schema de banco completo para as entidades estruturais da arquitetura
   v0.2: `Company` (sem depender de identificador externo), `CompanySource`
   (múltiplas fontes por empresa), `Evidence` (proveniência, append-only),
-  `AuditSnapshot`, `WebsiteQuality`, `OpportunityScore`, `IdentityMergeLog`,
-  `Region`, `Category`.
+  `AuditSnapshot`, `WebsiteQuality`, `OpportunityScore`, `Region`,
+  `Category`.
 - Estados não-binários de dado (`confirmed`, `not_detected`,
   `inconclusive`, `inaccessible`, `not_checked`, `stale`) como enum
   reutilizável — nenhuma checagem de presença digital pode colapsar
@@ -153,42 +168,64 @@ curl -X POST http://localhost:8000/api/discovery/search \
   erros transitórios, tratamento explícito de 429/4xx/5xx, e paginação
   conforme a documentação oficial (ver `docs/discovery.md`).
 - `DiscoveryService`: orquestra `SearchRun -> provider -> normalização ->
-  persistência`, nunca decide identidade definitiva nem qualidade/
-  oportunidade — só descobre e registra candidatos.
-- Persistência compatível com a arquitetura v0.2: `Company` continua sem
-  depender de identificador externo; cada fonte vira uma `CompanySource`;
-  cada campo observado vira uma `Evidence` append-only; nenhum campo
-  ausente na resposta do provider vira uma evidência negativa.
-- `SearchRun` com estados não-binários de execução (`pending`, `running`,
-  `completed`, `partially_completed`, `failed`, `cancelled`) e
-  `ProviderUsageRecord` para rastrear custo por chamada (sem nenhum preço
-  fixo no código).
-- Cache best-effort e API HTTP (`POST /api/discovery/search`,
-  `GET /api/discovery/runs/{id}`).
-- Migrations Alembic (2, aplicadas e testadas) e 89 testes ao todo (21 da
-  Fase 0 + 68 do domínio `discovery`); destes últimos, 67 rodam por padrão
-  com mocks/fakes — nenhum chama a API real — e 1 é um teste de integração
-  real, opcional, explicitamente marcado e ignorado por padrão.
+  persistência` — só descobre e registra candidatos.
+- `SearchRun` com estados não-binários de execução e `ProviderUsageRecord`
+  para rastrear custo por chamada (sem nenhum preço fixo no código).
+- Cache best-effort e API HTTP.
+
+**Fase 2 — Identity Resolution + Deduplicação**
+
+- `IdentityResolutionService`: quando o Discovery encontra uma fonte
+  inédita, compara o candidato contra empresas já conhecidas por telefone,
+  site oficial, nome (RapidFuzz), endereço, região e proximidade
+  geográfica (Haversine) antes de decidir entre reaproveitar uma `Company`
+  existente ou criar uma nova.
+- Regra de segurança contra falsos positivos: **nenhum sinal isolado
+  decide um merge** — só combinações de um sinal forte (telefone/site
+  oficial) com um segundo sinal compatível (nome/endereço). Contradições
+  concretas (telefone ou região divergentes e conhecidos) resultam em
+  `NO_MATCH` direto. Tudo o mais vira `INCONCLUSIVE`, nunca um merge
+  automático.
+- `DedupCandidate` (nova): audita toda decisão não trivial — decisões
+  confiantes ficam `auto_resolved`; ambíguas ficam `pending_review`, uma
+  fila para revisão humana futura.
+- `IdentityResolutionService.merge_companies`: funde duas `Company` já
+  existentes preservando todo o histórico (`CompanySource`/`Evidence`
+  reassociados, nunca apagados; a descartada é arquivada, não removida) —
+  testado na camada de serviço, ainda sem endpoint HTTP (ver
+  `docs/identity-resolution.md`).
+- Integração mínima e compatível com o Discovery: `find_or_create_company`
+  ganhou a chamada ao Identity Resolution só quando `(source,
+  external_id)` é inédito — nenhum contrato da Fase 1 mudou.
+- API HTTP somente leitura (`POST /api/identity/resolve`).
+- Migrations Alembic (3 no total, todas aplicadas e testadas) e 138 testes
+  ao todo (90 das Fases 0-1 + 48 do domínio `identity`, incluindo os 9
+  casos de exemplo do prompt da Fase 2 aplicados ao matcher e um teste de
+  integração completo com duas fontes diferentes para a mesma empresa);
+  137 passam por padrão sem qualquer chamada de rede, e 1 é o teste de
+  integração real e opcional da Fase 1, ignorado por padrão.
 
 ## O que NÃO está implementado ainda
 
-- Identity Resolution: nenhuma fusão automática entre `CompanySource` de
-  fontes diferentes; a tabela `DedupCandidate` da arquitetura v0.2 ainda
-  não foi criada — é escopo da Fase 2.
+- Fusão de duas `Company` exposta por HTTP (existe e é testada só na
+  camada de serviço — falta autenticação/autorização no sistema para
+  expor com segurança).
+- Consumo da fila de revisão humana (`DedupCandidate.status=
+  pending_review`) — existe e é populada; falta uma interface (Fase 5).
 - Digital Audit (nenhuma checagem própria de site/rede social além do que
   a Google Places já retorna como campo estruturado).
 - Website Quality Score e Opportunity Score (as tabelas existem, vazias —
   nenhuma fórmula foi implementada).
 - Sales Brief e qualquer agente de IA (nenhuma chamada à API da Anthropic;
-  o próprio Discovery é inteiramente determinístico).
+  Discovery e Identity Resolution são inteiramente determinísticos).
 - Outros providers de Discovery (OpenStreetMap fica documentado como
   extensão futura, não implementada — ver `docs/discovery.md`).
+- PostGIS (distância geográfica calculada em Python — ver
+  `docs/identity-resolution.md`).
 - Prototype Builder e CRM.
 - Dashboard/frontend.
 - SSRF protection completa (documentada como obrigatória para a Fase 3,
-  quando o sistema passar a buscar URLs arbitrárias de terceiros — o
-  Discovery só chama endpoints fixos e conhecidos do Google, nunca uma URL
-  fornecida por uma empresa).
+  quando o sistema passar a buscar URLs arbitrárias de terceiros).
 
 ## Limitações conhecidas
 
@@ -206,18 +243,19 @@ teve consequências práticas:
    nunca foi exercitado ponta a ponta com um worker real.
 4. Nenhuma chamada real à Google Places API foi feita — não há chave de
    API disponível neste ambiente. O provider foi implementado e testado
-   contra a documentação oficial com respostas simuladas
-   (`httpx.MockTransport`); um teste de integração real e opcional existe
-   em `tests/discovery/test_google_places_live.py` para quem tiver uma
-   chave própria.
+   contra a documentação oficial com respostas simuladas.
+5. Os limiares de similaridade do Identity Resolution (nome, endereço,
+   proximidade) foram calibrados manualmente contra os exemplos do
+   prompt da Fase 2, não contra dados reais de conversão.
 
 Nenhuma decisão de arquitetura foi alterada por causa dessas limitações —
 são lacunas de validação de ambiente, documentadas para serem fechadas
-assim que houver Docker/Redis/uma chave de API disponíveis, não mudanças
-de design. Ver `docs/development.md` e `docs/discovery.md` para o detalhe
-de cada uma.
+assim que houver Docker/Redis/uma chave de API/dados reais disponíveis,
+não mudanças de design. Ver `docs/development.md`, `docs/discovery.md` e
+`docs/identity-resolution.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Fase 2 — Identity Resolution + deduplicação**, conforme o roadmap da
-arquitetura v0.2. Não inicia automaticamente: aguarda aprovação explícita.
+**Fase 3 — Digital Audit + Evidence / Website Quality**, conforme o
+roadmap da arquitetura v0.2. Não inicia automaticamente: aguarda
+aprovação explícita.

@@ -19,7 +19,8 @@ from app.domains.companies.models import Company
 from app.domains.discovery.models import SearchRun, SearchRunStatus
 from app.domains.evidence.enums import ConfidenceLevel, DataState, EvidenceMethod
 from app.domains.evidence.models import Evidence
-from app.domains.identity.models import CompanySource, IdentityMergeLog
+from app.domains.identity.enums import MatchDecision
+from app.domains.identity.models import CompanySource, DedupCandidate, DedupCandidateStatus, IdentityMergeLog
 from app.domains.scoring.models import OpportunityScore, OpportunityTier
 
 
@@ -96,6 +97,68 @@ class TestCompanySource:
         )
         with pytest.raises(IntegrityError):
             db_session.flush()
+
+    def test_source_can_record_reported_coordinates(self, db_session: Session) -> None:
+        """Coordenadas (Fase 2) pertencem à fonte, não à Company — cada
+        fonte pode reportar uma localização própria (arquitetura Fase 2,
+        seção 7)."""
+        company = _make_company(db_session)
+        source = CompanySource(
+            company_id=company.id,
+            source="google_places",
+            external_id="ChIJ_geo",
+            confidence=ConfidenceLevel.HIGH,
+            latitude=-23.5505,
+            longitude=-46.6333,
+        )
+        db_session.add(source)
+        db_session.flush()
+
+        assert source.latitude == -23.5505
+        assert source.longitude == -46.6333
+
+
+class TestDedupCandidate:
+    def test_records_a_match_decision_as_auto_resolved(self, db_session: Session) -> None:
+        existing = _make_company(db_session, "Restaurante São João")
+
+        row = DedupCandidate(
+            company_id=existing.id,
+            resulting_company_id=existing.id,
+            source="openstreetmap",
+            external_id="node/1",
+            decision=MatchDecision.MATCH,
+            confidence=ConfidenceLevel.HIGH,
+            reasons=["telefone igual", "nome compatível"],
+            signals={"phone_match": True},
+            status=DedupCandidateStatus.AUTO_RESOLVED,
+        )
+        db_session.add(row)
+        db_session.flush()
+
+        assert row.reviewed_at is None
+        assert row.reasons == ["telefone igual", "nome compatível"]
+
+    def test_inconclusive_defaults_to_pending_review(self, db_session: Session) -> None:
+        existing = _make_company(db_session, "Restaurante do João")
+        new_company = _make_company(db_session, "Padaria Estrela")
+
+        row = DedupCandidate(
+            company_id=existing.id,
+            resulting_company_id=new_company.id,
+            source="google_places",
+            external_id="ChIJ_x",
+            decision=MatchDecision.INCONCLUSIVE,
+            confidence=ConfidenceLevel.MEDIUM,
+            reasons=["telefone igual, mas nome não corrobora"],
+            signals={"phone_match": True},
+            status=DedupCandidateStatus.PENDING_REVIEW,
+        )
+        db_session.add(row)
+        db_session.flush()
+
+        assert row.status == DedupCandidateStatus.PENDING_REVIEW
+        assert row.resulting_company_id != row.company_id
 
 
 class TestEvidenceAppendOnly:

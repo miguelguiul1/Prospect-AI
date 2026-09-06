@@ -12,6 +12,11 @@ Regras que este módulo existe para impor:
   linha e marca a antiga como superada. Nunca sobrescreve no lugar.
 - Nenhum campo ausente do provider vira uma evidência negativa: só criamos
   `Evidence` para campos que o Discovery de fato observou.
+- Quando `(source, external_id)` é inédito, a decisão de reaproveitar uma
+  `Company` já existente ou criar uma nova não é mais automática: passa
+  pelo Identity Resolution (Fase 2, `app.domains.identity.service`), que só
+  reaproveita uma empresa existente com evidência forte o suficiente — na
+  dúvida, cria uma `Company` nova e registra a ambiguidade para revisão.
 """
 from __future__ import annotations
 
@@ -33,7 +38,10 @@ from app.domains.discovery.normalization import (
 from app.domains.discovery.schemas import DiscoveryQuery
 from app.domains.evidence.enums import ConfidenceLevel, DataState, EvidenceMethod
 from app.domains.evidence.models import Evidence
+from app.domains.evidence.queries import get_current_evidence
+from app.domains.identity.enums import MatchDecision
 from app.domains.identity.models import CompanySource
+from app.domains.identity.service import IdentityResolutionService
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -83,9 +91,13 @@ def find_or_create_company(
     *,
     region: Region | None,
     category: Category | None,
+    identity_service: IdentityResolutionService | None = None,
 ) -> tuple[Company, bool]:
     """Retorna `(company, created)`. `created=False` quando a fonte já era
-    conhecida — nesse caso apenas `last_seen_at` é atualizado."""
+    conhecida (mesmo `source`+`external_id`) OU quando o Identity
+    Resolution encontrou uma `Company` existente com evidência forte o
+    suficiente para reaproveitar (Fase 2) — nesses dois casos, nenhuma
+    `Company` nova é criada."""
     existing_source = (
         db.query(CompanySource)
         .filter(
@@ -103,6 +115,30 @@ def find_or_create_company(
         db.flush()
         return existing_source.company, False
 
+    service = identity_service or IdentityResolutionService(db)
+    resolution = service.resolve_for_discovery(discovered, region_id=region.id if region else None)
+
+    if resolution.decision == MatchDecision.MATCH and resolution.matched_company is not None:
+        company = resolution.matched_company
+        source = CompanySource(
+            company_id=company.id,
+            source=discovered.source,
+            external_id=discovered.external_id,
+            source_url=normalize_url(discovered.source_url),
+            latitude=discovered.latitude,
+            longitude=discovered.longitude,
+            confidence=ConfidenceLevel.HIGH,
+            raw_reference=discovered.raw_reference,
+        )
+        db.add(source)
+        db.flush()
+        service.record_resolution(discovered, resolution, resulting_company=company)
+        return company, False
+
+    # NO_MATCH ou INCONCLUSIVE: mesmo comportamento da Fase 1 — cria uma
+    # Company nova. Diferença da Fase 2: se houve candidato comparado, a
+    # decisão fica registrada (`DedupCandidate`) para rastreabilidade, e
+    # casos INCONCLUSIVE ficam marcados para revisão humana futura.
     company = Company(
         canonical_name=normalized_name,
         region_id=region.id if region else None,
@@ -116,11 +152,15 @@ def find_or_create_company(
         source=discovered.source,
         external_id=discovered.external_id,
         source_url=normalize_url(discovered.source_url),
+        latitude=discovered.latitude,
+        longitude=discovered.longitude,
         confidence=ConfidenceLevel.HIGH,
         raw_reference=discovered.raw_reference,
     )
     db.add(source)
     db.flush()
+
+    service.record_resolution(discovered, resolution, resulting_company=company)
 
     return company, True
 
@@ -134,16 +174,7 @@ def _upsert_evidence(
     source: str,
     source_url: str | None,
 ) -> None:
-    latest = (
-        db.query(Evidence)
-        .filter(
-            Evidence.company_id == company_id,
-            Evidence.field == field,
-            Evidence.superseded_by_id.is_(None),
-        )
-        .order_by(Evidence.collected_at.desc())
-        .first()
-    )
+    latest = get_current_evidence(db, company_id, field)
 
     if latest is not None and latest.value == value and latest.state == DataState.CONFIRMED:
         return  # nada mudou: não gera uma evidência redundante.

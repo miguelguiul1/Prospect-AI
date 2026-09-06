@@ -70,6 +70,20 @@ class Settings(BaseSettings):
     # aplicação (ver app/domains/discovery/cache.py).
     discovery_cache_ttl_seconds: int = 86400
 
+    # --- Identity Resolution (Fase 2) ---------------------------------------
+    # Limiares de similaridade (0-100, RapidFuzz token_sort_ratio) usados como
+    # SINAIS DE APOIO — nunca são suficientes sozinhos para um merge
+    # automático (ver app/domains/identity/matching.py e docs/
+    # identity-resolution.md). São hipóteses iniciais calibradas manualmente
+    # contra os casos de exemplo da Fase 2, não um resultado de dados reais —
+    # arquitetura v0.2 já previa que precisariam de recalibração futura.
+    identity_name_similarity_threshold: int = 75
+    identity_address_similarity_threshold: int = 85
+    # Distância (metros) abaixo da qual duas localizações são consideradas
+    # "próximas" — nunca suficiente sozinha (empresas diferentes podem
+    # dividir prédio/galeria).
+    identity_geo_proximity_meters: float = 150.0
+
     # --- Reservado para integrações de fases futuras -----------------------
     # Nenhum destes campos é lido por qualquer código da Fase 0 ou 1. Eles
     # existem para que a configuração de fases futuras (Digital Audit, Sales

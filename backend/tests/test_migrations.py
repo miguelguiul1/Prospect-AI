@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "opportunity_scores",
     "search_runs",
     "provider_usage_records",
+    "dedup_candidates",
     # Tabela interna do próprio Alembic para rastrear a versão aplicada.
     "alembic_version",
 }
@@ -41,3 +42,10 @@ def test_company_sources_has_unique_constraint_on_source_and_external_id() -> No
         set(constraint["column_names"]) == {"source", "external_id"}
         for constraint in unique_constraints
     )
+
+
+def test_company_sources_has_coordinate_columns() -> None:
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("company_sources")}
+
+    assert {"latitude", "longitude"}.issubset(columns)

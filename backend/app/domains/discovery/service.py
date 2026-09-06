@@ -33,6 +33,7 @@ from app.domains.discovery.providers import get_provider
 from app.domains.discovery.providers.base import DiscoveryProvider, ProviderPage
 from app.domains.discovery.providers.errors import DiscoveryProviderError
 from app.domains.discovery.schemas import DiscoveryQuery
+from app.domains.identity.service import IdentityResolutionService
 
 logger = get_logger(__name__)
 
@@ -106,6 +107,7 @@ class DiscoveryService:
         page_token: str | None = None
         category = find_or_create_category(self._db, query.category)
         region = find_or_create_region(self._db, query)
+        identity_service = IdentityResolutionService(self._db, settings=self._settings)
 
         try:
             while True:
@@ -119,7 +121,8 @@ class DiscoveryService:
                 for discovered in results:
                     normalized_count += 1
                     company, created = find_or_create_company(
-                        self._db, discovered, region=region, category=category
+                        self._db, discovered, region=region, category=category,
+                        identity_service=identity_service,
                     )
                     record_evidence(self._db, company, discovered)
                     persisted_count += 1
