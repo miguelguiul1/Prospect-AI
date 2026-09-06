@@ -1,11 +1,11 @@
-# Guia de desenvolvimento — Fase 5
+# Guia de desenvolvimento — Fase 6
 
-## Ambiente em que as Fases 0-5 foram implementadas (e por que isso importa)
+## Ambiente em que as Fases 0-6 foram implementadas (e por que isso importa)
 
 A máquina usada tem **Python 3.14** e **Node**, mas **não tem Docker, WSL,
 PostgreSQL nem Redis instalados**. Isso foi verificado diretamente (não
 presumido) antes de começar a Fase 0, e o usuário optou explicitamente por
-não instalar nada disso. As Fases 1-4 herdam a mesma limitação —
+não instalar nada disso. As Fases 1-6 herdam a mesma limitação —
 consequências práticas, documentadas para quem continuar este projeto:
 
 1. **Os testes automatizados rodam contra SQLite**, não PostgreSQL. O
@@ -49,10 +49,18 @@ consequências práticas, documentadas para quem continuar este projeto:
    exercitado manualmente (listagem, detalhe, filtros, nova pesquisa,
    Sales Brief mockado, estados de erro/vazio, ausência de segredos nos
    artefatos estáticos gerados).
+7. **O Prototype Builder (Fase 6) não tem autenticação** — uma auditoria
+   confirmou que nenhuma fase do Prospect AI implementou login/sessão/
+   JWT, então `Prototype.owner_id` existe mas não isola nada nesta fase
+   (mesmo backend aberto de sempre). Validado com o mesmo servidor Next.js
+   de produção + backend real da Fase 5: criação, edição da árvore de
+   componentes, validação de segurança (tipo fora do catálogo, prop
+   aninhada) rejeitada sem corromper o protótipo, exclusão, e ausência de
+   segredos no bundle. Ver `docs/prototype-builder.md`.
 
 Se você tem Docker disponível, a validação completa (Postgres real, Redis
 real, `docker compose up`, um worker do RQ real) é o próximo passo
-recomendado antes de iniciar a Fase 6.
+recomendado antes de iniciar a Fase 7.
 
 ## Pré-requisitos
 
@@ -123,7 +131,10 @@ validação manual descrita ali, fora do pytest. Nenhum teste do domínio
 `test_providers.py` usa `httpx.MockTransport`, e `test_service.py`/
 `test_api.py` injetam um provider fake (ou dependem da ausência de
 `ANTHROPIC_API_KEY` no ambiente de teste para exercitar o caminho de
-degradação graciosa) — ver `docs/sales-brief.md`.
+degradação graciosa) — ver `docs/sales-brief.md`. O domínio `prototypes`
+(`tests/prototypes/`) não faz nenhuma chamada externa — é validação pura
+de estrutura de dados (catálogo de tipos, ciclos, profundidade) mais CRUD
+contra o SQLite de teste, sem IA e sem rede.
 
 Se `tests/discovery/` parecer lento na sua máquina, é o mesmo motivo do
 item 3 acima: cada tentativa de usar o cache best-effort do Discovery
@@ -247,6 +258,20 @@ npm run test                     # Vitest — ver docs/dashboard.md, seção "Te
                                   # para o que fica de fora e por quê
 ```
 
+## Usando o Prototype Builder localmente
+
+Requer o frontend (Fase 5) e o backend já no ar.
+
+```bash
+curl -X POST http://localhost:8000/api/prototypes   -H "Content-Type: application/json"   -d '{"name": "Landing de teste", "description": "Ideia inicial"}'
+```
+
+Ou pela interface: abra `http://localhost:3000/prototypes`, clique em
+"Novo protótipo", e depois de criado use o canvas (adicionar/selecionar/
+editar/remover/reordenar componentes, alternar preview, salvar). Nenhuma
+API key é necessária — o Prototype Builder é inteiramente determinístico,
+sem IA (ver `docs/prototype-builder.md`).
+
 ## Criando uma nova migration
 
 Sempre que um modelo em `app/domains/*/models.py` mudar:
@@ -266,7 +291,7 @@ especialmente para mudanças em `Enum` ou em constraints.
 backend/
   app/
     core/                  # config, logging, erros, middleware
-    api/routes/            # health, discovery, identity, audit, scoring, sales_brief, companies
+    api/routes/            # health, discovery, identity, audit, scoring, sales_brief, companies, prototypes
     db/                    # base declarativa, sessão, registro de modelos
     domains/
       discovery/           # DiscoveryQuery, DTO, normalização, service, jobs, cache
@@ -276,9 +301,10 @@ backend/
       scoring/             # ScoringContext, compute_opportunity_score, service (Fase 4)
       briefing/            # prompt, schemas, providers/, service, jobs (Fase 4)
       companies/           # models + queries.py (agregação de leitura, Fase 5)
+      prototypes/          # models, schemas (validação da árvore), service (Fase 6)
       evidence/
     jobs/                  # abstrações de job e conexão com a fila
-  migrations/              # Alembic (5 migrations)
+  migrations/              # Alembic (6 migrations)
   tests/
     discovery/             # testes do domínio discovery (sem chamadas reais)
     identity/              # testes do domínio identity (sem chamadas reais)
@@ -286,12 +312,15 @@ backend/
     scoring/               # testes do domínio scoring (puros + integração, sem IA)
     briefing/              # testes do domínio briefing (provider sempre mockado/fake)
     companies/             # testes das consultas/API agregada do Dashboard (Fase 5)
-frontend/          # Dashboard (Next.js, Fase 5) — ver docs/dashboard.md
+    prototypes/            # testes de validação da árvore, CRUD e API (Fase 6)
+frontend/          # Dashboard (Fase 5) + Prototype Builder (Fase 6) — Next.js
   src/
-    app/             # rotas (App Router): dashboard, prospects, pesquisas, configuracoes
+    app/             # rotas (App Router): dashboard, prospects, pesquisas,
+                     # prototypes, configuracoes
     components/      # ui/ (shadcn), badges/, layout/, dashboard/, prospects/,
-                     # prospect-detail/, discovery/, shared/
-    lib/             # api/ (cliente HTTP server-only + tipos), format.ts, utils.ts
+                     # prospect-detail/, discovery/, prototype-builder/, shared/
+    lib/             # api/ (cliente HTTP server-only + tipos), prototype/
+                     # (catálogo de componentes), format.ts, utils.ts
 infra/           # notas de infraestrutura (o docker-compose.yml fica na raiz)
 docs/            # este diretório
 ```

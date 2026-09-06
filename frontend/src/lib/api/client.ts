@@ -88,3 +88,14 @@ export function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 }
+
+export function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PUT",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+export function apiDelete<T = void>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
+}

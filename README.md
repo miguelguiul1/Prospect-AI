@@ -1,9 +1,10 @@
 # Prospect AI
 
-> **Fase 5 — Dashboard.** Este README descreve o estado real do projeto
-> nesta fase. Discovery, Identity Resolution, Digital Audit, Opportunity
-> Score, Sales Brief e o Dashboard (Next.js) estão implementados;
-> Prototype Builder/CRM ainda não.
+> **Fase 6 — Prototype Builder.** Este README descreve o estado real do
+> projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
+> Opportunity Score, Sales Brief, o Dashboard e a primeira camada do
+> Prototype Builder estão implementados; CRM/geração de código/publicação
+> ainda não.
 
 ## O que é
 
@@ -20,9 +21,9 @@ autorizadas.
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
 os agentes futuros e o roadmap de 8 fases. Este repositório implementa,
-até aqui, as **Fases 0, 1, 2, 3, 4 e 5** desse roadmap.
+até aqui, as **Fases 0, 1, 2, 3, 4, 5 e 6** desse roadmap.
 
-- `docs/architecture.md` — estado real da arquitetura após a Fase 5.
+- `docs/architecture.md` — estado real da arquitetura após a Fase 6.
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe.
@@ -37,6 +38,9 @@ até aqui, as **Fases 0, 1, 2, 3, 4 e 5** desse roadmap.
   grounding, defesa contra prompt injection, tratamento de falhas.
 - `docs/dashboard.md` — o Dashboard (Next.js): arquitetura, rotas, APIs
   consumidas/criadas, decisões de UX, segurança, testes, limitações.
+- `docs/prototype-builder.md` — o Prototype Builder: modelo de dados,
+  catálogo de componentes, segurança, arquitetura do editor, limitações
+  (inclui o achado de que o projeto não tem autenticação em nenhuma fase).
 - `docs/development.md` — como rodar, testar e migrar backend e frontend.
 
 ## Stack
@@ -55,6 +59,7 @@ até aqui, as **Fases 0, 1, 2, 3, 4 e 5** desse roadmap.
 | Sales Brief | Claude API (Anthropic Messages API via `httpx` puro — sem SDK novo) |
 | Logging | structlog (estruturado, com correlação por requisição) |
 | Frontend | Next.js 16 (App Router) + TypeScript + Tailwind v4 + shadcn/ui (ver `docs/dashboard.md`) |
+| Prototype Builder | Determinístico, sem IA — `useReducer` nativo, sem lib de estado nova (ver `docs/prototype-builder.md`) |
 
 ## Estrutura de diretórios
 
@@ -62,7 +67,7 @@ até aqui, as **Fases 0, 1, 2, 3, 4 e 5** desse roadmap.
 backend/
   app/
     core/                 # configuração, logging, erros, middleware
-    api/routes/           # health, discovery, identity, audit, scoring, sales_brief, companies
+    api/routes/           # health, discovery, identity, audit, scoring, sales_brief, companies, prototypes
     db/                   # base declarativa, sessão, registro de modelos
     domains/
       discovery/          # DiscoveryQuery, normalização, service, jobs, cache
@@ -72,9 +77,10 @@ backend/
       scoring/             # Opportunity Score: ScoringContext, fórmula, service
       briefing/            # Sales Brief: prompt, schemas, providers/, service, jobs
       companies/           # models + queries.py (agregação de leitura do Dashboard)
+      prototypes/          # models, schemas (validação da árvore), service
       evidence/
     jobs/                 # abstrações de job e conexão com a fila
-  migrations/             # Alembic (5 migrations)
+  migrations/             # Alembic (6 migrations)
   tests/
     discovery/            # testes do domínio discovery (sem chamadas reais)
     identity/             # testes do domínio identity (sem chamadas reais)
@@ -82,12 +88,16 @@ backend/
     scoring/              # testes do domínio scoring (puros + integração, sem IA)
     briefing/             # testes do domínio briefing (provider sempre mockado/fake)
     companies/             # testes das consultas/API agregada do Dashboard
-frontend/          # Dashboard (Next.js) — ver docs/dashboard.md e frontend/README.md
+    prototypes/             # validação da árvore, CRUD e API do Prototype Builder
+frontend/          # Dashboard + Prototype Builder (Next.js) — ver docs/dashboard.md,
+                   # docs/prototype-builder.md e frontend/README.md
   src/app/           # rotas (App Router)
-  src/components/    # ui/ (shadcn), badges/, layout/, dashboard/, prospects/, ...
-  src/lib/           # api/ (cliente HTTP server-only), format.ts
+  src/components/    # ui/ (shadcn), badges/, layout/, dashboard/, prospects/,
+                     # prototype-builder/, ...
+  src/lib/           # api/ (cliente HTTP server-only), prototype/ (catálogo), format.ts
 infra/           # notas de infraestrutura
-docs/            # documentação de arquitetura, dados, discovery, identity, audit, scoring, sales brief e dashboard
+docs/            # documentação de arquitetura, dados, discovery, identity, audit,
+                 # scoring, sales brief, dashboard e prototype builder
 docker-compose.yml
 ```
 
@@ -170,6 +180,12 @@ GET  /api/companies             → lista/filtra/pagina empresas com auditoria e
 GET  /api/companies/{id}        → agregação completa para a tela de detalhe do Dashboard — Fase 5
 GET  /api/companies/meta/stats  → KPIs do Dashboard, calculados em SQL — Fase 5
 GET  /api/companies/meta/filters → categorias/regiões em uso, para os filtros do Dashboard — Fase 5
+GET  /api/prototypes/meta/component-types → catálogo de tipos de componente aceitos — Fase 6
+POST /api/prototypes            → cria um protótipo (nome + descrição) — Fase 6
+GET  /api/prototypes            → lista protótipos (paginado) — Fase 6
+GET  /api/prototypes/{id}       → detalhe completo (árvore de componentes) — Fase 6
+PUT  /api/prototypes/{id}       → atualiza nome/descrição/árvore/settings — Fase 6
+DELETE /api/prototypes/{id}     → exclui um protótipo — Fase 6
 ```
 
 Exemplo — Discovery:
@@ -361,13 +377,52 @@ curl -X POST http://localhost:8000/api/sales-brief/<company_id>
 **Migrations e testes**: 5 migrations Alembic aplicadas e testadas
 (schema inicial; execução de busca; resolução de identidade; auditoria
 digital; Opportunity Score e Sales Brief — a Fase 5 não alterou o schema).
-**Backend: 339 testes ao todo** (304 das Fases 0-4 + 35 novos de
-`app.domains.companies`/`GET .../runs`); 338 passam por padrão sem
-qualquer chamada de rede real, e 1 é o teste de integração real e opcional
-da Fase 1, ignorado por padrão. **Frontend: 71 testes** (Vitest + React
-Testing Library) cobrindo componentes de apresentação e funções puras —
-ver `docs/dashboard.md`, seção "Testes", para o que fica de fora
-(Server Components assíncronos e chamadas de API reais) e por quê.
+Backend: 339 testes (304 das Fases 0-4 + 35 novos de
+`app.domains.companies`/`GET .../runs`). Frontend: 71 testes (Vitest +
+React Testing Library).
+
+**Fase 6 — Prototype Builder**
+
+- **Auditoria prévia revelou um achado crítico**: o Prospect AI não tem
+  autenticação em nenhuma fase (busca direta confirmou zero JWT/OAuth/
+  login/sessão em todo o backend) — o Prompt 09 presumia isso já pronto.
+  `Prototype.owner_id` existe como coluna reservada mas não é usado para
+  isolar nada nesta fase, mesmo precedente já aceito para a fusão de
+  `Company` desde a Fase 2. Ver `docs/prototype-builder.md`.
+- **Catálogo de 12 componentes iniciais** (Container, Section, Row,
+  Column, Text, Heading, Button, Image, Input, Textarea, Card, Divider) —
+  pequeno de propósito; adicionar um tipo novo não exige mudar a estrutura
+  de `Prototype`.
+- **Segurança**: catálogo de tipos fechado (backend rejeita qualquer
+  `type` fora da lista, nunca confia no frontend), `props`/`styles`
+  restritos a primitivos curtos (nenhum objeto/lista, tamanho limitado),
+  limites de tamanho/profundidade da árvore com detecção de ciclo. No
+  frontend, nenhum `dangerouslySetInnerHTML` em lugar nenhum — texto do
+  usuário é sempre filho de texto comum do React; `<img src>` rejeita
+  esquemas perigosos (`javascript:`, `data:text/html`).
+- **Canvas e Preview usam exatamente o mesmo renderer** — nunca uma
+  segunda implementação da interface.
+- **Estado do Builder**: um único `useReducer`, sem biblioteca de estado
+  nova — undo/redo incluído (pilha de snapshots, com agrupamento de
+  edições de texto num único passo de histórico).
+- Árvore de componentes salva como lista plana (`parent_id`/`order`), não
+  aninhada — adicionar/mover/remover um nó nunca exige reescrever a
+  árvore inteira.
+- Sem drag-and-drop nesta fase (permitido pelo próprio Prompt 09:
+  "priorize estabilidade") — adicionar/selecionar/mover/remover funcionam
+  via clique e botões.
+- 6 endpoints novos (`GET /api/prototypes/meta/component-types`,
+  `POST`/`GET /api/prototypes`, `GET`/`PUT`/`DELETE /api/prototypes/{id}`)
+  — nenhuma IA, nenhuma geração de código.
+
+**Migrations e testes**: 6 migrations Alembic (a Fase 6 acrescenta
+`prototypes`). **Backend: 379 testes ao todo** (339 das Fases 0-5 + 40
+novos em `tests/prototypes/` — validação da árvore, CRUD, API); 378 passam
+por padrão sem qualquer chamada de rede real, e 1 é o teste de integração
+real e opcional da Fase 1, ignorado por padrão. **Frontend: 131 testes**
+(71 da Fase 5 + 60 novos do Prototype Builder — reducer/undo-redo,
+segurança do renderer, canvas, painel de propriedades, paleta, diálogo de
+criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
 
 ## O que NÃO está implementado ainda
 
@@ -389,8 +444,13 @@ ver `docs/dashboard.md`, seção "Testes", para o que fica de fora
   validado, não (ver `docs/digital-audit.md`).
 - Crawling: o Digital Audit analisa só a página inicial do candidato.
 - Autenticação/autorização, multi-tenant, atualização em tempo real no
-  Dashboard (sem WebSocket/polling — ver `docs/dashboard.md`).
-- Prototype Builder, CRM, outreach, billing.
+  Dashboard nem no Prototype Builder (sem WebSocket/polling, sem
+  colaboração — ver `docs/dashboard.md` e `docs/prototype-builder.md`).
+- No Prototype Builder: drag-and-drop, geração de código, publicação/
+  deploy, domínio personalizado, marketplace de componentes, sistema de
+  plugins, histórico ilimitado (ver `docs/prototype-builder.md`, "O que
+  NÃO foi implementado").
+- CRM, outreach, billing.
 
 ## Limitações conhecidas
 
@@ -431,16 +491,25 @@ teve consequências práticas:
    App Router quando a rota tem um `loading.tsx` — a UI correta ainda
    assim é exibida (ver `docs/dashboard.md`, seção "Limitações
    conhecidas").
+8. **O Prototype Builder (Fase 6) não tem autenticação** — mesma limitação
+   estrutural do restante do sistema (achado de auditoria: zero
+   JWT/OAuth/login em todo o backend). `Prototype.owner_id` existe mas
+   não isola nada. Validado com o mesmo servidor de produção Next.js +
+   backend real: criação, edição da árvore, validação de segurança
+   (tipo fora do catálogo e propriedade aninhada corretamente rejeitados,
+   sem corromper o protótipo já salvo), exclusão, e ausência de segredos
+   no bundle — mesmo "soft 404" do item 7 acima também se aplica aqui.
+   Ver `docs/prototype-builder.md`.
 
 Nenhuma decisão de arquitetura foi alterada por causa dessas limitações —
 são lacunas de validação de ambiente, documentadas para serem fechadas
 assim que houver Docker/Redis/uma chave de API/dados reais disponíveis,
 não mudanças de design. Ver `docs/development.md`, `docs/discovery.md`,
 `docs/identity-resolution.md`, `docs/digital-audit.md`,
-`docs/opportunity-scoring.md`, `docs/sales-brief.md` e `docs/dashboard.md`
-para o detalhe de cada uma.
+`docs/opportunity-scoring.md`, `docs/sales-brief.md`, `docs/dashboard.md`
+e `docs/prototype-builder.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Fase 6 — Prototype Builder**, conforme o roadmap da arquitetura v0.2.
-Não inicia automaticamente: aguarda aprovação explícita.
+**Fase 7**, conforme o roadmap da arquitetura v0.2. Não inicia
+automaticamente: aguarda aprovação explícita.

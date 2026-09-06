@@ -14,4 +14,5 @@ from app.domains.identity.models import (  # noqa: F401
     DedupCandidate,
     IdentityMergeLog,
 )
+from app.domains.prototypes.models import Prototype  # noqa: F401
 from app.domains.scoring.models import OpportunityScore  # noqa: F401

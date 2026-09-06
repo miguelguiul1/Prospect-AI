@@ -1,6 +1,6 @@
-# Arquitetura — estado real após a Fase 5
+# Arquitetura — estado real após a Fase 6
 
-Este documento resume a arquitetura tal como **implementada** até a Fase 5.
+Este documento resume a arquitetura tal como **implementada** até a Fase 6.
 Ele não substitui a análise completa de arquitetura (v0.2), que continua
 sendo a referência de decisão para as fases futuras — este arquivo existe
 para não deixar a documentação divergir do código à medida que ele avança.
@@ -38,6 +38,10 @@ Região + segmento
   Dashboard              (Fase 5 — implementado: Next.js, só leitura + ações já existentes)
 ```
 
+O Prototype Builder (Fase 6) é uma ferramenta separada, não um estágio
+deste pipeline — não depende de nenhuma `Company`/prospect (o modelo
+`Prototype` não tem relação com `Company`). Ver `docs/prototype-builder.md`.
+
 A Fase 1 implementa o primeiro estágio real do pipeline: descoberta de
 candidatos por uma fonte externa. A Fase 2 decide se um candidato inédito é
 uma empresa já conhecida ou uma empresa nova. A Fase 3 verifica, para uma
@@ -60,7 +64,9 @@ completo de cada uma.
   Fase 5), `GET /api/companies` (lista/filtros, Fase 5),
   `GET /api/companies/{company_id}` (agregação completa, Fase 5),
   `GET /api/companies/meta/stats` e `GET /api/companies/meta/filters`
-  (Fase 5).
+  (Fase 5), `GET /api/prototypes/meta/component-types`,
+  `POST`/`GET /api/prototypes`, `GET`/`PUT`/`DELETE /api/prototypes/{id}`
+  (Fase 6).
 - Schema de banco completo para as entidades estruturais da v0.2, mais os
   campos de rastreabilidade de execução de busca (Fase 1), de resolução de
   identidade (Fase 2) e de auditoria digital (Fase 3) — ver `data-model.md`.
@@ -98,16 +104,22 @@ completo de cada uma.
   Discovery, o segundo porque é puramente local/determinístico e não
   chama nada externo), todos com fallback síncrono documentado quando o
   Redis está indisponível.
-- Migrations Alembic geradas a partir dos modelos, com cinco migrations
+- Migrations Alembic geradas a partir dos modelos, com seis migrations
   aplicadas e testadas (schema inicial; execução de busca; resolução de
   identidade; auditoria digital e Website Quality Score; Opportunity
-  Score e Sales Brief).
+  Score e Sales Brief; Prototype Builder).
 - **Dashboard funcional** (`frontend/`, Next.js): visão geral com KPIs
   reais, listagem/filtro/paginação de prospects, detalhe completo por
   empresa (identidade, descoberta, website, qualidade, score com
   breakdown, evidências, sales brief), histórico e criação de pesquisas.
   Consome só leitura + as ações HTTP já existentes — nenhuma regra de
   negócio duplicada. Ver `docs/dashboard.md`.
+- **Prototype Builder funcional** (`frontend/`, Fase 6): criar um
+  protótipo, montar uma árvore de componentes (12 tipos) num canvas,
+  editar propriedades, alternar preview, salvar/recarregar. Catálogo de
+  tipos fechado e valores de propriedade restritos a primitivos curtos —
+  nenhuma execução de conteúdo do usuário, nenhuma geração de código, sem
+  IA. Ver `docs/prototype-builder.md`.
 
 ## O que não existe ainda
 
@@ -129,9 +141,13 @@ completo de cada uma.
 - Crawling: o Digital Audit analisa só a página inicial do candidato.
 - Autenticação/autorização (o Dashboard, Fase 5, é uma interface aberta
   sobre o mesmo backend sem autenticação desde a Fase 0).
-- Atualização em tempo real no Dashboard (sem WebSocket/polling — ver
-  `docs/dashboard.md`).
-- Prototype Builder, CRM, outreach, billing.
+- Atualização em tempo real no Dashboard nem no Prototype Builder (sem
+  WebSocket/polling, sem colaboração — ver `docs/dashboard.md` e
+  `docs/prototype-builder.md`).
+- No Prototype Builder: drag-and-drop, geração de código, publicação/
+  deploy, marketplace de componentes, sistema de plugins (ver
+  `docs/prototype-builder.md`, "O que NÃO foi implementado").
+- CRM, outreach, billing.
 
 ## Stack
 
@@ -211,7 +227,19 @@ limitações). Quatro endpoints novos, só leitura, em
 `app/api/routes/companies.py` + `GET /api/discovery/runs` (lista) — ver
 `docs/dashboard.md`, seção "API do backend usada/criada".
 
+## Fase 6 — Prototype Builder
+
+Primeira camada funcional de um construtor visual: criar um protótipo,
+montar uma árvore de componentes (12 tipos iniciais) num canvas, editar
+propriedades, alternar preview, salvar/recarregar. Determinístico e sem
+IA — nenhuma geração de código, nenhuma execução de conteúdo do usuário.
+Ver `docs/prototype-builder.md` para a arquitetura completa, incluindo o
+achado de auditoria mais importante desta fase: **o Prospect AI não tem
+autenticação em nenhuma fase** (confirmado por busca direta no backend),
+o que significa que `Prototype.owner_id` existe mas não é usado para
+isolar nada ainda — mesma limitação já aceita para a fusão de `Company`
+(seção "O que não existe ainda" acima).
+
 ## Próxima fase
 
-**Fase 6 — Prototype Builder.** Não inicia automaticamente — aguarda
-aprovação explícita.
+**Fase 7.** Não inicia automaticamente — aguarda aprovação explícita.

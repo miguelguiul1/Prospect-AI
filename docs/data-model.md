@@ -1,11 +1,12 @@
-# Modelo de dados — Fase 4
+# Modelo de dados — Fase 6
 
 Reflete exatamente o schema criado pelas migrations
 `backend/migrations/versions/0001_initial_schema.py` (Fase 0),
 `0002_discovery_search_run_details.py` (Fase 1),
-`0003_identity_resolution.py` (Fase 2), `0004_digital_audit.py` (Fase 3) e
-`0005_opportunity_scoring_and_sales_brief.py` (Fase 4), geradas a partir dos
-modelos em `backend/app/domains/*/models.py`.
+`0003_identity_resolution.py` (Fase 2), `0004_digital_audit.py` (Fase 3),
+`0005_opportunity_scoring_and_sales_brief.py` (Fase 4) e
+`0006_prototype_builder.py` (Fase 6 — a Fase 5 não alterou o schema),
+geradas a partir dos modelos em `backend/app/domains/*/models.py`.
 
 ## Tabelas
 
@@ -24,6 +25,7 @@ modelos em `backend/app/domains/*/models.py`.
 | `sales_briefs` | briefing | Um Sales Brief gerado (ou uma tentativa falha) para uma empresa. **Nova na Fase 4** — ver abaixo. |
 | `search_runs` | discovery | Uma execução de descoberta: critérios, status e contadores de resultado. |
 | `provider_usage_records` | discovery | Uma linha por chamada real a um provider externo — base do rastreamento de custo. |
+| `prototypes` | prototypes | Um protótipo do Prototype Builder (Fase 6). **Nova na Fase 6** — ver abaixo. Sem relação com `companies`. |
 
 ## Por que `Company` não tem `place_id`
 
@@ -160,6 +162,26 @@ diretamente) ancora qual versão exata dos dados (via
 `OpportunityScore.scoring_version` e a cadeia até o `AuditSnapshot` que o
 gerou) fundamentou aquele briefing — dispensa um campo extra de "versão de
 contexto".
+
+## `prototypes` (Fase 6)
+
+Tabela isolada, sem chave estrangeira para `companies` nem para nenhuma
+outra tabela — o Prototype Builder é uma ferramenta independente, não um
+estágio do pipeline de prospecção (ver `docs/architecture.md`). `owner_id`
+existe (`String`, nullable, indexado) mas não é preenchido nem usado para
+autorizar nada nesta fase: uma auditoria confirmou que o Prospect AI não
+tem autenticação em nenhuma fase até aqui, então não há usuário para
+associar — reservado para quando uma fase futura de autenticação existir,
+no mesmo espírito de `search_runs.requested_by` (Fase 1). Ver
+`docs/prototype-builder.md` para a discussão completa.
+
+`components` (JSON) guarda a árvore de componentes como uma **lista
+plana** — cada item tem `parent_id`/`order`, não uma estrutura de
+`children` aninhados — validada inteira (tipos, ciclos, profundidade,
+tamanho) por `app.domains.prototypes.schemas.validate_component_tree`
+antes de qualquer persistência. `settings` (JSON) fica reservado para
+configuração do protótipo como um todo (ex.: dimensões do canvas),
+nenhuma ainda é lida por código desta fase.
 
 ## `dedup_candidates` (Fase 2): uma tabela para dois papéis
 
