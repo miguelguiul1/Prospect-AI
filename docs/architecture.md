@@ -1,6 +1,6 @@
-# Arquitetura — estado real após a Fase 3
+# Arquitetura — estado real após a Fase 4
 
-Este documento resume a arquitetura tal como **implementada** até a Fase 3.
+Este documento resume a arquitetura tal como **implementada** até a Fase 4.
 Ele não substitui a análise completa de arquitetura (v0.2), que continua
 sendo a referência de decisão para as fases futuras — este arquivo existe
 para não deixar a documentação divergir do código à medida que ele avança.
@@ -29,26 +29,31 @@ Região + segmento
   Website Quality Score  (Fase 3 — implementado, separado do Opportunity Score)
       │
       ▼
-  Opportunity Scoring    (Fase 4 — não implementado; estrutura de dados existe)
+  Opportunity Scoring    (Fase 4 — implementado: determinístico, sem IA)
       │
       ▼
-  Sales Brief            (Fase 4 — não implementado)
+  Sales Brief            (Fase 4 — implementado: único componente com IA)
 ```
 
 A Fase 1 implementa o primeiro estágio real do pipeline: descoberta de
 candidatos por uma fonte externa. A Fase 2 decide se um candidato inédito é
 uma empresa já conhecida ou uma empresa nova. A Fase 3 verifica, para uma
 empresa já identificada, se ela tem um website próprio acessível e avalia
-sua qualidade técnica. Nenhuma das três decide oportunidade comercial
-(Fase 4) — ver `docs/discovery.md`, `docs/identity-resolution.md` e
-`docs/digital-audit.md` para o detalhamento completo de cada uma.
+sua qualidade técnica. A Fase 4 combina os sinais das três fases
+anteriores em um Opportunity Score determinístico e gera, via IA, um
+briefing de prospecção estritamente fundamentado nesses dados — ver
+`docs/discovery.md`, `docs/identity-resolution.md`, `docs/digital-audit.md`,
+`docs/opportunity-scoring.md` e `docs/sales-brief.md` para o detalhamento
+completo de cada uma.
 
 ## O que existe hoje
 
 - API HTTP (FastAPI) com `/health`, `/health/dependencies`,
   `POST /api/discovery/search`, `GET /api/discovery/runs/{run_id}`,
-  `POST /api/identity/resolve`, `POST /api/audit/{company_id}` e
-  `GET /api/audit/{company_id}`.
+  `POST /api/identity/resolve`, `POST /api/audit/{company_id}`,
+  `GET /api/audit/{company_id}`, `POST /api/scoring/{company_id}`,
+  `GET /api/scoring/{company_id}`, `POST /api/sales-brief/{company_id}` e
+  `GET /api/sales-brief/{company_id}`.
 - Schema de banco completo para as entidades estruturais da v0.2, mais os
   campos de rastreabilidade de execução de busca (Fase 1), de resolução de
   identidade (Fase 2) e de auditoria digital (Fase 3) — ver `data-model.md`.
@@ -65,18 +70,31 @@ sua qualidade técnica. Nenhuma das três decide oportunidade comercial
   tamanho, extrai sinais técnicos determinísticos (HTML padrão, sem
   JavaScript) e calcula um **Website Quality Score** reprodutível,
   separado do Opportunity Score. Ver `docs/digital-audit.md`.
+- **Opportunity Score funcional**: combina Website Gap, Website Quality
+  Gap, Digital Presence Gap, Business Visibility, Segment Fit e
+  Contactability em um score 0-100 determinístico, com breakdown
+  explicável por dimensão, confiança separada do score e classificação em
+  5 faixas. Nenhuma IA participa. Ver `docs/opportunity-scoring.md`.
+- **Sales Brief funcional**: único componente com IA de todo o sistema —
+  gera um briefing de prospecção estritamente fundamentado em dados já
+  coletados, com defesa contra prompt injection, validação estrutural da
+  resposta e degradação graciosa quando o provider está indisponível. Ver
+  `docs/sales-brief.md`.
 - Camada de configuração centralizada (`app/core/config.py`), agora
-  incluindo as configurações de Discovery, Identity Resolution e Digital
-  Audit.
+  incluindo as configurações de Discovery, Identity Resolution, Digital
+  Audit e Sales Brief (Anthropic).
 - Logging estruturado com correlação por requisição.
 - Tratamento de erro consistente (`app/core/errors.py`).
-- Abstração de job (`app/jobs/`) com três jobs reais (`DiscoveryJob`,
-  `DigitalAuditJob`; Identity Resolution roda embutida na persistência do
-  Discovery, sem job próprio), todos com fallback síncrono documentado
-  quando o Redis está indisponível.
-- Migrations Alembic geradas a partir dos modelos, com quatro migrations
+- Abstração de job (`app/jobs/`) com quatro jobs reais (`DiscoveryJob`,
+  `DigitalAuditJob`, `SalesBriefJob`; Identity Resolution e Opportunity
+  Score rodam de forma síncrona embutida — o primeiro na persistência do
+  Discovery, o segundo porque é puramente local/determinístico e não
+  chama nada externo), todos com fallback síncrono documentado quando o
+  Redis está indisponível.
+- Migrations Alembic geradas a partir dos modelos, com cinco migrations
   aplicadas e testadas (schema inicial; execução de busca; resolução de
-  identidade; auditoria digital e Website Quality Score).
+  identidade; auditoria digital e Website Quality Score; Opportunity
+  Score e Sales Brief).
 
 ## O que não existe ainda
 
@@ -84,10 +102,11 @@ sua qualidade técnica. Nenhuma das três decide oportunidade comercial
   testada só na camada de serviço — falta autenticação no sistema).
 - Consumo da fila de revisão humana de Identity Resolution
   (`DedupCandidate.status=pending_review`) — trabalho de fase futura.
-- Qualquer cálculo de Opportunity Score (o Website Quality Score, da Fase
-  3, é um insumo futuro dele, não o mesmo conceito).
-- Qualquer agente de IA (nenhuma chamada à API da Anthropic — Discovery,
-  Identity Resolution e Digital Audit são inteiramente determinísticos).
+- Qualquer agente de IA multi-etapa ou framework de agentes (CrewAI,
+  AutoGen, LangChain, LangGraph) — o Sales Brief é uma única chamada
+  request/response a um provider de texto, não um agente.
+- Uma chamada real à API da Anthropic (sem `ANTHROPIC_API_KEY` disponível
+  neste ambiente de desenvolvimento — ver `docs/sales-brief.md`).
 - Providers de Discovery além do Google Places.
 - PostGIS (distância geográfica calculada em Python, tanto na Fase 2
   quanto na Fase 3).
@@ -111,7 +130,7 @@ sua qualidade técnica. Nenhuma das três decide oportunidade comercial
 | Extração de HTML | `html.parser` (biblioteca padrão) | Implementado — nenhuma dependência nova na Fase 3 |
 | Validação de SSRF | `ipaddress`/`socket` (biblioteca padrão) | Implementado |
 | Logging | structlog | Implementado |
-| Camada de raciocínio (LLM) | Claude API | Não integrada — reservada nas configs |
+| Camada de raciocínio (LLM) | Claude API (Anthropic Messages API, via `httpx` puro) | Implementado — só no Sales Brief; sem chave real neste ambiente |
 | Frontend | Next.js (planejado) | Não iniciado |
 
 ## Desvio documentado: `WebsiteQuality` mora no domínio `audit`
@@ -155,10 +174,17 @@ removidos, não substituídos. Ver `docs/discovery.md` e
   não). O `_upsert_evidence` original do Discovery não foi tocado — zero
   risco de regressão na Fase 1.
 
+## Refatorações da Fase 4 (sem mudança de comportamento para Fases 0-3)
+
+- `OpportunityTier` (placeholder da Fase 0, nunca persistido com um valor
+  real até aqui) ganhou 2 valores novos (`medium_high`, `very_low`) — de 3
+  para 5 faixas. Como nenhuma linha de `opportunity_scores` tinha `tier`
+  preenchido antes da Fase 4, não houve dado histórico para migrar.
+- `OpportunityScore` ganhou `confidence`, `scoring_version` e `updated_at`
+  — aditivo, sem remover nenhum campo existente.
+
 ## Próxima fase
 
-**Fase 4 — Opportunity Score + Sales Brief.** Combinar o Website Quality
-Score (Fase 3) com outros sinais (presença social, facilidade de contato,
-adequação de segmento) para estimar oportunidade comercial, e gerar o
-briefing de prospecção em linguagem natural. Não inicia automaticamente —
-aguarda aprovação explícita.
+**Fase 5 — Dashboard.** Interface para visualizar empresas descobertas,
+scores e briefings gerados, e para disparar manualmente auditoria/score/
+briefing. Não inicia automaticamente — aguarda aprovação explícita.

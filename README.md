@@ -1,9 +1,9 @@
 # Prospect AI
 
-> **Fase 3 — Digital Audit + Website Quality Score.** Este README descreve
-> o estado real do projeto nesta fase. Discovery, Identity Resolution e
-> Digital Audit estão implementados; pontuação de oportunidade e geração
-> de briefing ainda não.
+> **Fase 4 — Opportunity Score + Sales Brief.** Este README descreve o
+> estado real do projeto nesta fase. Discovery, Identity Resolution,
+> Digital Audit, Opportunity Score e Sales Brief estão implementados;
+> Dashboard/CRM/Prototype Builder ainda não.
 
 ## O que é
 
@@ -20,9 +20,9 @@ autorizadas.
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
 os agentes futuros e o roadmap de 8 fases. Este repositório implementa,
-até aqui, as **Fases 0, 1, 2 e 3** desse roadmap.
+até aqui, as **Fases 0, 1, 2, 3 e 4** desse roadmap.
 
-- `docs/architecture.md` — estado real da arquitetura após a Fase 3.
+- `docs/architecture.md` — estado real da arquitetura após a Fase 4.
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe.
@@ -31,6 +31,10 @@ até aqui, as **Fases 0, 1, 2 e 3** desse roadmap.
 - `docs/digital-audit.md` — o domínio de Digital Audit em detalhe: fluxo,
   estados, SSRF, Evidence Layer, metodologia do Website Quality Score,
   limitações, testes.
+- `docs/opportunity-scoring.md` — a fórmula do Opportunity Score:
+  dimensões, pesos, classificação, confiança, limitações.
+- `docs/sales-brief.md` — o Sales Brief: arquitetura, provider de IA,
+  grounding, defesa contra prompt injection, tratamento de falhas.
 - `docs/development.md` — como rodar, testar e migrar o backend.
 
 ## Stack
@@ -45,6 +49,8 @@ até aqui, as **Fases 0, 1, 2 e 3** desse roadmap.
 | Fonte de descoberta | Google Places API (New) |
 | Similaridade de texto | RapidFuzz (matching de identidade) |
 | Extração de HTML / SSRF | `html.parser`, `ipaddress`, `socket` (biblioteca padrão) |
+| Opportunity Score | Determinístico, sem IA (`app.domains.scoring`) |
+| Sales Brief | Claude API (Anthropic Messages API via `httpx` puro — sem SDK novo) |
 | Logging | structlog (estruturado, com correlação por requisição) |
 | Frontend | Ainda não iniciado (ver `frontend/README.md`) |
 
@@ -54,20 +60,24 @@ até aqui, as **Fases 0, 1, 2 e 3** desse roadmap.
 backend/
   app/
     core/                 # configuração, logging, erros, middleware
-    api/routes/           # health, discovery, identity, audit
+    api/routes/           # health, discovery, identity, audit, scoring, sales_brief
     db/                   # base declarativa, sessão, registro de modelos
     domains/
       discovery/          # DiscoveryQuery, normalização, service, jobs, cache
         providers/        # contrato DiscoveryProvider + GooglePlacesProvider
       identity/           # matching, profile, service (Identity Resolution)
       audit/               # ssrf, http_client, html_signals, scoring, service, jobs
-      companies/, evidence/, scoring/, briefing/
+      scoring/             # Opportunity Score: ScoringContext, fórmula, service
+      briefing/            # Sales Brief: prompt, schemas, providers/, service, jobs
+      companies/, evidence/
     jobs/                 # abstrações de job e conexão com a fila
-  migrations/             # Alembic (4 migrations)
+  migrations/             # Alembic (5 migrations)
   tests/
     discovery/            # testes do domínio discovery (sem chamadas reais)
     identity/             # testes do domínio identity (sem chamadas reais)
     audit/                # testes do domínio audit (sem chamadas reais)
+    scoring/              # testes do domínio scoring (puros + integração, sem IA)
+    briefing/             # testes do domínio briefing (provider sempre mockado/fake)
 frontend/        # placeholder — dashboard é Fase 5
 infra/           # notas de infraestrutura
 docs/            # documentação de arquitetura, dados, discovery, identity, audit e desenvolvimento
@@ -129,6 +139,10 @@ GET  /api/discovery/runs/{id}   → consulta o estado de uma execução
 POST /api/identity/resolve      → decide (sem persistir) se um candidato bate com uma empresa existente
 POST /api/audit/{company_id}    → cria e executa uma auditoria digital (ver docs/digital-audit.md)
 GET  /api/audit/{company_id}    → consulta a auditoria mais recente da empresa
+POST /api/scoring/{company_id}  → calcula/recalcula o Opportunity Score (ver docs/opportunity-scoring.md)
+GET  /api/scoring/{company_id}  → consulta o Opportunity Score mais recente
+POST /api/sales-brief/{company_id} → gera um Sales Brief via IA (ver docs/sales-brief.md)
+GET  /api/sales-brief/{company_id} → consulta o Sales Brief mais recente
 ```
 
 Exemplo — Discovery:
@@ -152,6 +166,16 @@ Exemplo — Digital Audit (a empresa precisa já ter uma `Evidence` de
 
 ```bash
 curl -X POST http://localhost:8000/api/audit/<company_id>
+```
+
+Exemplo — Opportunity Score (precisa de uma auditoria já executada) e
+Sales Brief (precisa de um Opportunity Score já calculado; sem
+`ANTHROPIC_API_KEY` configurada, responde `status: "failed"` de forma
+controlada):
+
+```bash
+curl -X POST http://localhost:8000/api/scoring/<company_id>
+curl -X POST http://localhost:8000/api/sales-brief/<company_id>
 ```
 
 ## O que está implementado
@@ -232,12 +256,59 @@ curl -X POST http://localhost:8000/api/audit/<company_id>
 - API HTTP (`POST`/`GET /api/audit/{company_id}`), validada com uma
   chamada de rede real contra `https://example.com`.
 
-**Migrations e testes**: 4 migrations Alembic aplicadas e testadas
+**Fase 4 — Opportunity Score + Sales Brief**
+
+- **Opportunity Score determinístico** (`app.domains.scoring.scoring`):
+  combina 6 dimensões (Website Gap, Website Quality Gap, Digital Presence
+  Gap, Business Visibility, Segment Fit, Contactability) em um score 0-100
+  por média ponderada, com pesos documentados e configuráveis. Nenhuma
+  dimensão sem evidência suficiente vira 0 ou 100 por suposição — é
+  excluída, e os pesos restantes são renormalizados. Separado do Website
+  Quality Score (Fase 3): nunca a mesma coisa, nunca uma cópia/transformação
+  trivial. `rating`/`review_count` entram só como sinal de visibilidade
+  pública, nunca como proxy de faturamento — com saturação explícita para
+  nunca deixar um volume alto de avaliações dominar o score. Ver
+  `docs/opportunity-scoring.md`.
+- `OpportunityScore` ganhou `confidence` (reflete quantidade/qualidade de
+  sinal disponível, separado do valor do score), `scoring_version` e
+  classificação em 5 faixas (`high`/`medium_high`/`medium`/`low`/
+  `very_low`, ampliado do placeholder de 3 faixas da Fase 0). `breakdown`
+  grava, por dimensão, valor bruto, peso, contribuição, razão textual e
+  referências de evidência — toda decisão é auditável.
+- **Sales Brief** (`app.domains.briefing`): único componente de todo o
+  sistema que chama um provider de IA (Anthropic, via `httpx` puro — sem
+  adicionar o SDK `anthropic` como dependência). Grounding estrito: usa
+  somente `Company`/`Evidence`/`AuditSnapshot`/`WebsiteQuality`/
+  `OpportunityScore` já existentes, nunca pesquisa nada novo, nunca inventa
+  faturamento/funcionários/orçamento/tecnologias/clientes/intenção de
+  compra. Toda a saída é validada contra um schema estrutural
+  (`SalesBriefContent`) antes de ser aceita — uma resposta inválida vira
+  `status=failed`, nunca um briefing malformado persistido como sucesso.
+- **Defesa contra prompt injection**: todo dado de `Evidence`/
+  `WebsiteQuality` é interpolado dentro de um bloco de dados delimitado,
+  nunca dentro do `system prompt` (que é uma constante fixa); ocorrências
+  literais do delimitador dentro de uma evidência são neutralizadas antes
+  da interpolação, para que um valor malicioso não consiga "escapar" do
+  bloco de dados. Testado estruturalmente e com um cenário de injeção
+  fim-a-fim (`tests/briefing/`).
+- **Degradação graciosa**: sem `ANTHROPIC_API_KEY` configurada, o Sales
+  Brief responde de forma controlada (`status=failed`,
+  `error_code=ProviderUnavailableError`) — nunca um crash, nunca um
+  briefing inventado. O Opportunity Score é inteiramente independente e
+  continua funcionando normalmente.
+- API HTTP (`POST`/`GET /api/scoring/{company_id}` e
+  `POST`/`GET /api/sales-brief/{company_id}`), validada de ponta a ponta
+  com um servidor real e uma auditoria real contra `https://example.com` —
+  a chamada de IA em si sempre com um provider mockado, nunca uma chamada
+  real à Anthropic. Ver `docs/sales-brief.md`.
+
+**Migrations e testes**: 5 migrations Alembic aplicadas e testadas
 (schema inicial; execução de busca; resolução de identidade; auditoria
-digital). **242 testes ao todo** (138 das Fases 0-2 + 102 do domínio
-`audit`, incluindo os cenários de SSRF, redirects, extração de HTML e
-determinismo do score, + 2 novas checagens de migration); 241 passam por
-padrão sem qualquer chamada de rede, e 1 é o teste de integração real e
+digital; Opportunity Score e Sales Brief). **304 testes ao todo** (241 das
+Fases 0-3 + 63 novos da Fase 4 — pura fórmula de scoring, integração com
+banco, provider Anthropic com `httpx.MockTransport`, prompt/injeção,
+serviço de Sales Brief com provider fake, e API); 303 passam por padrão
+sem qualquer chamada de rede real, e 1 é o teste de integração real e
 opcional da Fase 1, ignorado por padrão.
 
 ## O que NÃO está implementado ainda
@@ -246,9 +317,11 @@ opcional da Fase 1, ignorado por padrão.
   camada de serviço — falta autenticação/autorização no sistema).
 - Consumo da fila de revisão humana do Identity Resolution — existe e é
   populada; falta uma interface (Fase 5).
-- Qualquer cálculo de Opportunity Score ou geração de Sales Brief.
-- Qualquer agente de IA (nenhuma chamada à API da Anthropic — Discovery,
-  Identity Resolution e Digital Audit são inteiramente determinísticos).
+- Qualquer agente de IA multi-etapa ou framework de agentes (CrewAI,
+  AutoGen, LangChain, LangGraph) — o Sales Brief é uma única chamada
+  request/response a um provider de texto, não um agente.
+- Uma chamada real à API da Anthropic (sem `ANTHROPIC_API_KEY` disponível
+  neste ambiente de desenvolvimento).
 - Outros providers de Discovery (OpenStreetMap fica documentado como
   extensão futura).
 - PostGIS (distância geográfica calculada em Python, tanto na Fase 2
@@ -279,18 +352,27 @@ teve consequências práticas:
    API disponível neste ambiente. O Digital Audit, por outro lado, **foi**
    validado com uma chamada de rede real contra `https://example.com`
    (ver `docs/digital-audit.md`).
-5. Os limiares de similaridade do Identity Resolution, e os pesos do
-   Website Quality Score, foram calibrados manualmente contra os exemplos
-   dos respectivos prompts de implementação — não contra dados reais.
+5. Os limiares de similaridade do Identity Resolution, os pesos do
+   Website Quality Score e os pesos/tabela de segmento do Opportunity
+   Score foram calibrados manualmente contra os exemplos dos respectivos
+   prompts de implementação — não contra dados reais.
+6. **Nenhuma chamada real à API da Anthropic foi feita** — não há
+   `ANTHROPIC_API_KEY` disponível neste ambiente. O Sales Brief foi
+   validado de ponta a ponta (servidor real, banco real, Opportunity Score
+   real) com um provider de IA mockado — nunca uma chamada real. O caminho
+   de degradação graciosa sem chave configurada é, ele mesmo, o estado
+   real desta máquina, e também foi validado de verdade (ver
+   `docs/sales-brief.md`).
 
 Nenhuma decisão de arquitetura foi alterada por causa dessas limitações —
 são lacunas de validação de ambiente, documentadas para serem fechadas
 assim que houver Docker/Redis/uma chave de API/dados reais disponíveis,
 não mudanças de design. Ver `docs/development.md`, `docs/discovery.md`,
-`docs/identity-resolution.md` e `docs/digital-audit.md` para o detalhe de
+`docs/identity-resolution.md`, `docs/digital-audit.md`,
+`docs/opportunity-scoring.md` e `docs/sales-brief.md` para o detalhe de
 cada uma.
 
 ## Próxima fase
 
-**Fase 4 — Opportunity Score + Sales Brief**, conforme o roadmap da
-arquitetura v0.2. Não inicia automaticamente: aguarda aprovação explícita.
+**Fase 5 — Dashboard**, conforme o roadmap da arquitetura v0.2. Não inicia
+automaticamente: aguarda aprovação explícita.

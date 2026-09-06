@@ -1,10 +1,11 @@
-# Modelo de dados — Fase 3
+# Modelo de dados — Fase 4
 
 Reflete exatamente o schema criado pelas migrations
 `backend/migrations/versions/0001_initial_schema.py` (Fase 0),
 `0002_discovery_search_run_details.py` (Fase 1),
-`0003_identity_resolution.py` (Fase 2) e `0004_digital_audit.py` (Fase 3),
-geradas a partir dos modelos em `backend/app/domains/*/models.py`.
+`0003_identity_resolution.py` (Fase 2), `0004_digital_audit.py` (Fase 3) e
+`0005_opportunity_scoring_and_sales_brief.py` (Fase 4), geradas a partir dos
+modelos em `backend/app/domains/*/models.py`.
 
 ## Tabelas
 
@@ -19,7 +20,8 @@ geradas a partir dos modelos em `backend/app/domains/*/models.py`.
 | `evidence` | evidence | Fato individual com proveniência, append-only. |
 | `audit_snapshots` | audit | Uma execução de auditoria sobre uma `Company`. **Alterada na Fase 3** — ver abaixo. |
 | `website_quality_snapshots` | audit | Website Quality Score. **Alterada na Fase 3** — deixou de ser placeholder. |
-| `opportunity_scores` | scoring | Placeholder 1:1 com `audit_snapshots` para o Opportunity Score futuro (Fase 4). |
+| `opportunity_scores` | scoring | O Opportunity Score, 1:1 com `audit_snapshots`. **Implementado na Fase 4** — ver abaixo. |
+| `sales_briefs` | briefing | Um Sales Brief gerado (ou uma tentativa falha) para uma empresa. **Nova na Fase 4** — ver abaixo. |
 | `search_runs` | discovery | Uma execução de descoberta: critérios, status e contadores de resultado. |
 | `provider_usage_records` | discovery | Uma linha por chamada real a um provider externo — base do rastreamento de custo. |
 
@@ -51,8 +53,9 @@ job de Discovery/Identity Resolution), não no banco.
 
 Todos os `Enum` do SQLAlchemy usados neste schema (`CompanyStatus`,
 `ConfidenceLevel`, `EvidenceMethod`, `DataState`, `OpportunityTier`,
-`SearchRunStatus`, `MatchDecision`/`DedupCandidateStatus` da Fase 2, e
-`AuditStatus`, novo na Fase 3) são declarados com `native_enum=False`. Isso os
+`SearchRunStatus`, `MatchDecision`/`DedupCandidateStatus` da Fase 2,
+`AuditStatus` da Fase 3, e `SalesBriefStatus`, novo na Fase 4) são
+declarados com `native_enum=False`. Isso os
 armazena como `VARCHAR` (com validação do lado da aplicação) em vez de um
 tipo `ENUM` nativo do PostgreSQL. A troca é deliberada: adicionar um novo
 valor a um `ENUM` nativo do Postgres exige `ALTER TYPE`, uma operação mais
@@ -118,6 +121,45 @@ conteúdo/UX/técnico), `confidence` (reaproveita `ConfidenceLevel`) e
 confirmed` — nunca um `0` que pareça dizer "site ruim" quando na verdade
 significa "não avaliável". Ver `docs/digital-audit.md` para a metodologia
 completa.
+
+## `opportunity_scores` na Fase 4
+
+Ganhou `confidence` (reaproveita `ConfidenceLevel`), `scoring_version`
+(string curta, hoje `"v1"`) e `updated_at` — aditivo, sem remover nenhum
+campo existente desde a Fase 0. `tier` passou de 3 para 5 valores
+(`OpportunityTier`: `high`/`medium_high`/`medium`/`low`/`very_low`); como
+nenhuma linha tinha `tier` preenchido antes da Fase 4 (o cálculo nunca
+rodou), não houve dado histórico para migrar. `breakdown` (já existia como
+placeholder) agora é populado de verdade: por dimensão, valor bruto, peso,
+contribuição, razão textual e referências de evidência — ver
+`docs/opportunity-scoring.md`.
+
+Recalcular o score do MESMO `audit_snapshot_id` atualiza a linha existente
+em vez de criar uma segunda (a `UNIQUE` em `audit_snapshot_id`, existente
+desde a Fase 0, impede duas linhas para a mesma execução de auditoria) — o
+histórico de como a empresa evoluiu já é preservado pela cadeia de
+`AuditSnapshot` (uma nova auditoria sempre gera um novo snapshot e,
+portanto, um novo score).
+
+## `sales_briefs` (Fase 4)
+
+Nova tabela, sem relação 1:1 com nada — `company_id` e
+`opportunity_score_id` são só `index`, não `unique`, porque o histórico de
+Sales Briefs de uma empresa é intencionalmente preservado (cada
+`POST /api/sales-brief/{company_id}` cria uma linha nova, nunca sobrescreve
+uma anterior, mesmo em caso de falha). `status` (`SalesBriefStatus`:
+`completed`/`failed`) descreve se a geração teve sucesso; `content` (JSON)
+fica `NULL` quando `status=failed` — nunca um conteúdo parcial ou
+inventado. `error_code`/`error_message` só são preenchidos em caso de
+falha. `input_tokens`/`output_tokens`/`duration_ms` só são preenchidos
+quando o próprio provider os informa — nunca estimados. Ver
+`docs/sales-brief.md` para o desenho completo.
+
+O vínculo com `opportunity_score_id` (em vez de `audit_snapshot_id`
+diretamente) ancora qual versão exata dos dados (via
+`OpportunityScore.scoring_version` e a cadeia até o `AuditSnapshot` que o
+gerou) fundamentou aquele briefing — dispensa um campo extra de "versão de
+contexto".
 
 ## `dedup_candidates` (Fase 2): uma tabela para dois papéis
 

@@ -106,14 +106,26 @@ class Settings(BaseSettings):
     # produção (mesma prática de identificação usada por crawlers legítimos).
     audit_http_user_agent: str = "ProspectAI-DigitalAudit/1.0"
 
+    # --- Sales Brief (Fase 4) -----------------------------------------------
+    # Único componente de todo o Prospect AI que chama um provider de IA — ver
+    # app.domains.briefing. Sem `anthropic_api_key`, o provider responde
+    # `ProviderUnavailableError` de forma controlada (o Opportunity Score
+    # continua funcionando normalmente); nenhuma chamada é feita sem a chave.
+    anthropic_api_key: str | None = None
+    # Modelo é configurável pelo operador (não fixado aqui como verdade
+    # absoluta) — confira o identificador de modelo atual na documentação da
+    # Anthropic antes de configurar em produção. Ver docs/sales-brief.md.
+    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    anthropic_api_base_url: str = "https://api.anthropic.com"
+    anthropic_http_connect_timeout_seconds: float = 5.0
+    anthropic_http_read_timeout_seconds: float = 30.0
+    anthropic_max_tokens: int = 1500
+
     # --- Reservado para integrações de fases futuras -----------------------
-    # Nenhum destes campos é lido por qualquer código da Fase 0, 1, 2 ou 3.
-    # Eles existem para que a configuração de fases futuras (Sales Brief)
-    # não exija reestruturar o carregamento de settings.
+    # Nenhum destes campos é lido por qualquer código das Fases 0-4.
     google_custom_search_api_key: str | None = None
     google_custom_search_cx: str | None = None
     instagram_graph_access_token: str | None = None
-    anthropic_api_key: str | None = None
     # -------------------------------------------------------------------
 
     @property

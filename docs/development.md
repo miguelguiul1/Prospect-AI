@@ -1,11 +1,11 @@
-# Guia de desenvolvimento — Fase 3
+# Guia de desenvolvimento — Fase 4
 
-## Ambiente em que as Fases 0-3 foram implementadas (e por que isso importa)
+## Ambiente em que as Fases 0-4 foram implementadas (e por que isso importa)
 
 A máquina usada tem **Python 3.14** e **Node**, mas **não tem Docker, WSL,
 PostgreSQL nem Redis instalados**. Isso foi verificado diretamente (não
 presumido) antes de começar a Fase 0, e o usuário optou explicitamente por
-não instalar nada disso. As Fases 1-3 herdam a mesma limitação —
+não instalar nada disso. As Fases 1-4 herdam a mesma limitação —
 consequências práticas, documentadas para quem continuar este projeto:
 
 1. **Os testes automatizados rodam contra SQLite**, não PostgreSQL. O
@@ -33,6 +33,15 @@ consequências práticas, documentadas para quem continuar este projeto:
    contra `https://example.com` (o domínio reservado pela IANA para esse
    tipo de teste) — não contra um site de empresa de verdade, e não em
    volume. Ver `docs/digital-audit.md`.
+5. **Nenhuma chamada real ao provider de IA do Sales Brief (Fase 4) foi
+   feita** — não há `ANTHROPIC_API_KEY` disponível nesta máquina. A Fase 4
+   foi validada de ponta a ponta (servidor real, banco real, Opportunity
+   Score real contra o mesmo `AuditSnapshot` de `https://example.com`
+   acima) com um provider MOCKADO injetado diretamente no
+   `SalesBriefService` — nunca uma chamada de rede real à Anthropic. O
+   caminho de degradação graciosa (sem chave configurada) também foi
+   validado de verdade, já que é exatamente o estado real desta máquina.
+   Ver `docs/sales-brief.md`.
 
 Se você tem Docker disponível, a validação completa (Postgres real, Redis
 real, `docker compose up`, um worker do RQ real) é o próximo passo
@@ -102,7 +111,12 @@ Da mesma forma, nenhum teste do domínio `audit` (`tests/audit/`) faz uma
 requisição de rede real — SSRF é testado com um resolver de DNS falso
 injetado, e o HTTP com `httpx.MockTransport` (ver `docs/digital-audit.md`).
 A única chamada de rede real ao Digital Audit nesta implementação foi a
-validação manual descrita ali, fora do pytest.
+validação manual descrita ali, fora do pytest. Nenhum teste do domínio
+`briefing` (`tests/briefing/`) chama a API da Anthropic de verdade —
+`test_providers.py` usa `httpx.MockTransport`, e `test_service.py`/
+`test_api.py` injetam um provider fake (ou dependem da ausência de
+`ANTHROPIC_API_KEY` no ambiente de teste para exercitar o caminho de
+degradação graciosa) — ver `docs/sales-brief.md`.
 
 Se `tests/discovery/` parecer lento na sua máquina, é o mesmo motivo do
 item 3 acima: cada tentativa de usar o cache best-effort do Discovery
@@ -171,6 +185,38 @@ possíveis e a metodologia do score. **Use apenas destinos seguros e
 públicos ao testar manualmente** — nunca aponte para um site de terceiro
 sem necessidade real de auditá-lo.
 
+## Calculando um Opportunity Score localmente
+
+Precisa de uma `Company` com pelo menos uma auditoria (`AuditSnapshot`) já
+executada — rode `POST /api/audit/{company_id}` primeiro:
+
+```bash
+curl -X POST http://localhost:8000/api/scoring/<company_id>
+curl http://localhost:8000/api/scoring/<company_id>
+```
+
+Nenhuma API key é necessária — o cálculo é inteiramente local e
+determinístico (`app.domains.scoring.scoring`), sem chamar nada externo.
+A resposta traz `score`, `tier`, `confidence` e o `breakdown` completo por
+dimensão. Ver `docs/opportunity-scoring.md`.
+
+## Gerando um Sales Brief localmente
+
+Precisa de um Opportunity Score já calculado (passo anterior). Requer
+`ANTHROPIC_API_KEY` configurada em `backend/.env` para de fato gerar
+conteúdo — sem ela, o endpoint responde `202` normalmente, com
+`status: "failed"` e `error_code: "ProviderUnavailableError"` (nenhum
+crash, nenhum briefing inventado — ver `docs/sales-brief.md`):
+
+```bash
+curl -X POST http://localhost:8000/api/sales-brief/<company_id>
+curl http://localhost:8000/api/sales-brief/<company_id>
+```
+
+**Nunca configure uma `ANTHROPIC_API_KEY` real só para "testar" neste
+repositório sem necessidade** — cada chamada bem-sucedida é uma chamada
+paga de verdade à API da Anthropic.
+
 ## Criando uma nova migration
 
 Sempre que um modelo em `app/domains/*/models.py` mudar:
@@ -190,20 +236,24 @@ especialmente para mudanças em `Enum` ou em constraints.
 backend/
   app/
     core/                  # config, logging, erros, middleware
-    api/routes/            # health, discovery, identity, audit
+    api/routes/            # health, discovery, identity, audit, scoring, sales_brief
     db/                    # base declarativa, sessão, registro de modelos
     domains/
       discovery/           # DiscoveryQuery, DTO, normalização, service, jobs, cache
         providers/         # contrato + GooglePlacesProvider
       identity/            # matching, profile, service (Fase 2)
       audit/               # ssrf, http_client, html_signals, scoring, service, jobs (Fase 3)
-      companies/, evidence/, scoring/, briefing/
+      scoring/             # ScoringContext, compute_opportunity_score, service (Fase 4)
+      briefing/            # prompt, schemas, providers/, service, jobs (Fase 4)
+      companies/, evidence/
     jobs/                  # abstrações de job e conexão com a fila
-  migrations/              # Alembic (4 migrations)
+  migrations/              # Alembic (5 migrations)
   tests/
     discovery/             # testes do domínio discovery (sem chamadas reais)
     identity/              # testes do domínio identity (sem chamadas reais)
     audit/                 # testes do domínio audit (sem chamadas reais)
+    scoring/               # testes do domínio scoring (puros + integração, sem IA)
+    briefing/              # testes do domínio briefing (provider sempre mockado/fake)
 frontend/        # ainda não iniciado (ver frontend/README.md)
 infra/           # notas de infraestrutura (o docker-compose.yml fica na raiz)
 docs/            # este diretório
