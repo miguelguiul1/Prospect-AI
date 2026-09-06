@@ -1,10 +1,10 @@
-# Modelo de dados — Fase 2
+# Modelo de dados — Fase 3
 
 Reflete exatamente o schema criado pelas migrations
 `backend/migrations/versions/0001_initial_schema.py` (Fase 0),
-`0002_discovery_search_run_details.py` (Fase 1) e
-`0003_identity_resolution.py` (Fase 2), geradas a partir dos modelos em
-`backend/app/domains/*/models.py`.
+`0002_discovery_search_run_details.py` (Fase 1),
+`0003_identity_resolution.py` (Fase 2) e `0004_digital_audit.py` (Fase 3),
+geradas a partir dos modelos em `backend/app/domains/*/models.py`.
 
 ## Tabelas
 
@@ -13,13 +13,13 @@ Reflete exatamente o schema criado pelas migrations
 | `companies` | companies | Identidade interna da empresa. **Não tem nenhuma coluna de identificador externo.** |
 | `regions` | companies | Região geográfica normalizada. |
 | `categories` | companies | Categoria/segmento normalizado. |
-| `company_sources` | identity | Vínculo entre uma `Company` e uma fonte externa. `UNIQUE(source, external_id)`. **Alterada na Fase 2** — ganhou `latitude`/`longitude`. |
+| `company_sources` | identity | Vínculo entre uma `Company` e uma fonte externa. `UNIQUE(source, external_id)`. Ganhou `latitude`/`longitude` na Fase 2. |
 | `identity_merge_logs` | identity | Histórico de fusões/reversões de identidade entre duas `Company` já existentes. |
-| `dedup_candidates` | identity | **Nova na Fase 2.** Toda decisão não trivial de Identity Resolution — auditoria e fila de revisão humana. |
+| `dedup_candidates` | identity | Toda decisão não trivial de Identity Resolution — auditoria e fila de revisão humana. |
 | `evidence` | evidence | Fato individual com proveniência, append-only. |
-| `audit_snapshots` | audit | Uma execução de auditoria sobre uma `Company`. |
-| `website_quality_snapshots` | audit | Placeholder 1:1 com `audit_snapshots` para o Website Quality Score futuro. |
-| `opportunity_scores` | scoring | Placeholder 1:1 com `audit_snapshots` para o Opportunity Score futuro. |
+| `audit_snapshots` | audit | Uma execução de auditoria sobre uma `Company`. **Alterada na Fase 3** — ver abaixo. |
+| `website_quality_snapshots` | audit | Website Quality Score. **Alterada na Fase 3** — deixou de ser placeholder. |
+| `opportunity_scores` | scoring | Placeholder 1:1 com `audit_snapshots` para o Opportunity Score futuro (Fase 4). |
 | `search_runs` | discovery | Uma execução de descoberta: critérios, status e contadores de resultado. |
 | `provider_usage_records` | discovery | Uma linha por chamada real a um provider externo — base do rastreamento de custo. |
 
@@ -51,8 +51,8 @@ job de Discovery/Identity Resolution), não no banco.
 
 Todos os `Enum` do SQLAlchemy usados neste schema (`CompanyStatus`,
 `ConfidenceLevel`, `EvidenceMethod`, `DataState`, `OpportunityTier`,
-`SearchRunStatus`, e os dois novos da Fase 2 — `MatchDecision` e
-`DedupCandidateStatus`) são declarados com `native_enum=False`. Isso os
+`SearchRunStatus`, `MatchDecision`/`DedupCandidateStatus` da Fase 2, e
+`AuditStatus`, novo na Fase 3) são declarados com `native_enum=False`. Isso os
 armazena como `VARCHAR` (com validação do lado da aplicação) em vez de um
 tipo `ENUM` nativo do PostgreSQL. A troca é deliberada: adicionar um novo
 valor a um `ENUM` nativo do Postgres exige `ALTER TYPE`, uma operação mais
@@ -72,16 +72,19 @@ ter um `value`. Isso cobre dois casos com a mesma estrutura:
   `field="website", value=None, state=INCONCLUSIVE"`).
 
 Nenhuma lógica de "resolver o valor atual de um campo" **por confiança e
-recência entre fontes conflitantes** foi implementada — isso continua
-reservado para a Fase 3 (Digital Auditor), que vai precisar decidir entre
-valores concorrentes com pesos de confiança. O que a Fase 2 adicionou
+recência entre fontes conflitantes** foi implementada — a Fase 3 (Digital
+Audit) usa `state` para o que ela de fato precisa (distinguir
+`confirmed`/`inconclusive`/`inaccessible`/`not_checked` de uma checagem
+própria), mas ainda não arbitra entre DOIS valores concorrentes de fontes
+diferentes com pesos de confiança; isso seguirá reservado para quando essa
+necessidade concreta aparecer. O que já existe desde a Fase 2
 (`app/domains/evidence/queries.py::get_current_evidence`) é mais simples:
 como só existe uma `Evidence` não superada por `(company_id, field)` a
 qualquer momento — cada novo valor supera o anterior via
 `Evidence.mark_superseded_by()` — buscar "o valor atual" nunca tem empate
-para resolver. Essa função é reaproveitada tanto pela persistência do
-Discovery quanto pelo Identity Resolution (que precisa saber o telefone/
-site/endereço atual de uma empresa para comparar contra um candidato).
+para resolver. A Fase 3 generalizou essa mesma função em
+`upsert_evidence` (aceitando `state`/`audit_snapshot_id` variáveis) para
+gravar seus próprios sinais sem duplicar a lógica do Discovery.
 
 ## `AuditSnapshot`, `WebsiteQuality`, `OpportunityScore`: relação 1:1 com uma execução, não com a empresa
 
@@ -91,6 +94,30 @@ auditoria tem no máximo um resultado de qualidade e um score. Nenhum dos
 dois se relaciona diretamente com `companies`: isso é o que preserva o
 histórico de como a pontuação de uma empresa mudou ao longo do tempo, em
 vez de sobrescrever um único campo em `Company`.
+
+## `audit_snapshots` e `website_quality_snapshots` na Fase 3
+
+`AuditSnapshot` ganhou as colunas que uma execução real de auditoria
+precisa registrar: `website_url` (a URL efetivamente auditada — pode
+diferir do `website` corrente em `Evidence` se o candidato mudou depois),
+`site_state` (reaproveita `DataState` da Fase 0 — `confirmed`/
+`not_detected`/`inconclusive`/`inaccessible`/`not_checked`), `status`
+(novo enum `AuditStatus`: `pending`/`running`/`completed`/`failed` —
+descreve se o PROCESSO rodou bem, não o que foi encontrado; um site
+inacessível é `status=completed` com `site_state=inaccessible`, nunca
+`status=failed`), `started_at`/`finished_at` e `error_code`/
+`error_message` (usados também para anotar decisões não-erro, como um
+bloqueio de SSRF). `presence_level` permanece um placeholder — sua
+semântica na v0.2 é mais ampla (síntese incluindo redes sociais) do que o
+que a Fase 3 avalia.
+
+`WebsiteQuality` ganhou `components` (score por dimensão — segurança/SEO/
+conteúdo/UX/técnico), `confidence` (reaproveita `ConfidenceLevel`) e
+`limitations` (por que o score pode estar incompleto). `score`/
+`confidence`/`components` ficam todos `NULL` quando `site_state !=
+confirmed` — nunca um `0` que pareça dizer "site ruim" quando na verdade
+significa "não avaliável". Ver `docs/digital-audit.md` para a metodologia
+completa.
 
 ## `dedup_candidates` (Fase 2): uma tabela para dois papéis
 

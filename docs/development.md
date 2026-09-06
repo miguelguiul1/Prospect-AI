@@ -1,11 +1,11 @@
-# Guia de desenvolvimento — Fase 2
+# Guia de desenvolvimento — Fase 3
 
-## Ambiente em que as Fases 0-2 foram implementadas (e por que isso importa)
+## Ambiente em que as Fases 0-3 foram implementadas (e por que isso importa)
 
 A máquina usada tem **Python 3.14** e **Node**, mas **não tem Docker, WSL,
 PostgreSQL nem Redis instalados**. Isso foi verificado diretamente (não
 presumido) antes de começar a Fase 0, e o usuário optou explicitamente por
-não instalar nada disso. As Fases 1 e 2 herdam a mesma limitação —
+não instalar nada disso. As Fases 1-3 herdam a mesma limitação —
 consequências práticas, documentadas para quem continuar este projeto:
 
 1. **Os testes automatizados rodam contra SQLite**, não PostgreSQL. O
@@ -20,17 +20,23 @@ consequências práticas, documentadas para quem continuar este projeto:
    revisados manualmente, mas ninguém os rodou de fato. Antes de confiar
    neles, rode `docker compose up --build` em uma máquina com Docker e
    confirme que os três serviços sobem e `/health` responde.
-3. **`enqueue_or_run_discovery()` nunca exercitou o caminho enfileirado de
-   verdade.** Sem Redis, toda chamada a `POST /api/discovery/search` nesta
-   máquina passa pelo fallback síncrono (ver `docs/discovery.md`). O
-   caminho `queue.enqueue(...)` está implementado e coberto por testes que
-   validam que o *fallback* funciona quando a fila falha, mas ninguém
-   confirmou ainda, com um Redis e um worker do RQ reais, que um job
-   enfileirado é de fato processado por um worker separado.
+3. **`enqueue_or_run_discovery()`/`enqueue_or_run_audit()` nunca
+   exercitaram o caminho enfileirado de verdade.** Sem Redis, toda chamada
+   a `POST /api/discovery/search` ou `POST /api/audit/{company_id}` nesta
+   máquina passa pelo fallback síncrono (ver `docs/discovery.md` e
+   `docs/digital-audit.md`). O caminho `queue.enqueue(...)` está
+   implementado e coberto por testes que validam que o *fallback* funciona
+   quando a fila falha, mas ninguém confirmou ainda, com um Redis e um
+   worker do RQ reais, que um job enfileirado é de fato processado por um
+   worker separado.
+4. **O Digital Audit (Fase 3) foi validado com uma chamada de rede real**
+   contra `https://example.com` (o domínio reservado pela IANA para esse
+   tipo de teste) — não contra um site de empresa de verdade, e não em
+   volume. Ver `docs/digital-audit.md`.
 
 Se você tem Docker disponível, a validação completa (Postgres real, Redis
 real, `docker compose up`, um worker do RQ real) é o próximo passo
-recomendado antes de iniciar a Fase 2.
+recomendado antes de iniciar a Fase 4.
 
 ## Pré-requisitos
 
@@ -92,6 +98,11 @@ honestamente, em vez de mascará-la. Nenhum teste do domínio `discovery`
 (`tests/discovery/`) chama a API do Google de verdade — todos usam
 `httpx.MockTransport` ou um provider falso, exceto o teste marcado
 `@pytest.mark.external`, que é ignorado por padrão (ver `docs/discovery.md`).
+Da mesma forma, nenhum teste do domínio `audit` (`tests/audit/`) faz uma
+requisição de rede real — SSRF é testado com um resolver de DNS falso
+injetado, e o HTTP com `httpx.MockTransport` (ver `docs/digital-audit.md`).
+A única chamada de rede real ao Digital Audit nesta implementação foi a
+validação manual descrita ali, fora do pytest.
 
 Se `tests/discovery/` parecer lento na sua máquina, é o mesmo motivo do
 item 3 acima: cada tentativa de usar o cache best-effort do Discovery
@@ -141,6 +152,25 @@ razões e, se houver, o `matched_company_id` — sem persistir nada. Ver
 `docs/identity-resolution.md` para os sinais usados e os limiares
 configuráveis.
 
+## Rodando uma auditoria digital localmente
+
+Precisa de uma `Company` que já tenha uma `Evidence` de `field="website"`
+(produzida por uma busca de Discovery real, ou inserida manualmente para
+teste). Nenhuma API key é necessária — o Digital Audit não depende de
+nenhum provedor externo, só faz uma requisição HTTP direta ao candidato:
+
+```bash
+curl -X POST http://localhost:8000/api/audit/<company_id>
+curl http://localhost:8000/api/audit/<company_id>
+```
+
+A resposta inclui `site_state`, `status` e, quando o site foi confirmado
+como acessível, o `website_quality` completo (score, componentes por
+dimensão, sinais, limitações). Ver `docs/digital-audit.md` para os estados
+possíveis e a metodologia do score. **Use apenas destinos seguros e
+públicos ao testar manualmente** — nunca aponte para um site de terceiro
+sem necessidade real de auditá-lo.
+
 ## Criando uma nova migration
 
 Sempre que um modelo em `app/domains/*/models.py` mudar:
@@ -160,18 +190,20 @@ especialmente para mudanças em `Enum` ou em constraints.
 backend/
   app/
     core/                  # config, logging, erros, middleware
-    api/routes/            # health, discovery, identity
+    api/routes/            # health, discovery, identity, audit
     db/                    # base declarativa, sessão, registro de modelos
     domains/
       discovery/           # DiscoveryQuery, DTO, normalização, service, jobs, cache
         providers/         # contrato + GooglePlacesProvider
       identity/            # matching, profile, service (Fase 2)
-      companies/, evidence/, audit/, scoring/, briefing/
+      audit/               # ssrf, http_client, html_signals, scoring, service, jobs (Fase 3)
+      companies/, evidence/, scoring/, briefing/
     jobs/                  # abstrações de job e conexão com a fila
-  migrations/              # Alembic (3 migrations)
+  migrations/              # Alembic (4 migrations)
   tests/
     discovery/             # testes do domínio discovery (sem chamadas reais)
     identity/              # testes do domínio identity (sem chamadas reais)
+    audit/                 # testes do domínio audit (sem chamadas reais)
 frontend/        # ainda não iniciado (ver frontend/README.md)
 infra/           # notas de infraestrutura (o docker-compose.yml fica na raiz)
 docs/            # este diretório

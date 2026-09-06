@@ -22,44 +22,24 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
 
 from rapidfuzz import fuzz
 
 from app.core.config import Settings, get_settings
+from app.domains.discovery.normalization import (  # noqa: F401 - reexportado para compatibilidade
+    UNTRUSTED_WEBSITE_DOMAINS,
+    is_trusted_website,
+)
 from app.domains.evidence.enums import ConfidenceLevel
 from app.domains.identity.enums import MatchDecision
 from app.domains.identity.geo import haversine_distance_meters
 from app.domains.identity.profile import CompanyProfile
 
-# Domínios que NUNCA contam como "site oficial" para fins de matching —
-# mesma lista conceitual da distinção "site próprio vs. rede social/
-# agregador/marketplace" da arquitetura v0.2 (seção 11 do documento de
-# arquitetura). Não é exaustiva; é o conjunto mais comum o suficiente para
-# não tratar coincidências de perfil social como confirmação de identidade.
-UNTRUSTED_WEBSITE_DOMAINS = frozenset(
-    {
-        "instagram.com",
-        "facebook.com",
-        "fb.com",
-        "m.facebook.com",
-        "linktr.ee",
-        "linktree.com",
-        "beacons.ai",
-        "wa.me",
-        "api.whatsapp.com",
-        "whatsapp.com",
-        "maps.google.com",
-        "goo.gl",
-        "g.page",
-        "linkedin.com",
-        "tiktok.com",
-        "twitter.com",
-        "x.com",
-        "youtube.com",
-        "youtu.be",
-    }
-)
+# `UNTRUSTED_WEBSITE_DOMAINS`/`is_trusted_website` viviam aqui até a Fase 3,
+# quando o Digital Audit passou a precisar exatamente da mesma regra
+# (distinguir site próprio de rede social/agregador). Promovidos para
+# `app.domains.discovery.normalization` — reexportados aqui só para não
+# quebrar quem já importa daqui (ex.: testes da Fase 2).
 
 
 @dataclass(frozen=True)
@@ -68,21 +48,6 @@ class MatchResult:
     confidence: ConfidenceLevel
     reasons: list[str] = field(default_factory=list)
     signals: dict = field(default_factory=dict)
-
-
-def _hostname(url: str) -> str:
-    host = urlsplit(url).netloc.lower()
-    return host[4:] if host.startswith("www.") else host
-
-
-def is_trusted_website(url: str | None) -> bool:
-    """`False` para redes sociais, agregadores de link e afins — mesmo que
-    a URL seja válida, ela não conta como site oficial (Fase 2, seção 6:
-    "Não tratar automaticamente Instagram, Facebook, marketplaces ou
-    diretórios como website oficial da empresa")."""
-    if not url:
-        return False
-    return _hostname(url) not in UNTRUSTED_WEBSITE_DOMAINS
 
 
 def _fold(value: str) -> str:

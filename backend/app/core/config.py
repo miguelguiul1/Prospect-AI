@@ -84,10 +84,32 @@ class Settings(BaseSettings):
     # dividir prédio/galeria).
     identity_geo_proximity_meters: float = 150.0
 
+    # --- Digital Audit (Fase 3) ---------------------------------------------
+    # Timeouts e limites são obrigatórios para qualquer requisição a um
+    # website de terceiro — ver docs/digital-audit.md, seção "Segurança".
+    audit_http_connect_timeout_seconds: float = 5.0
+    audit_http_read_timeout_seconds: float = 10.0
+    audit_http_max_retries: int = 1
+    audit_http_backoff_base_seconds: float = 0.5
+    audit_http_backoff_max_seconds: float = 4.0
+
+    # Limite nosso, não do site auditado — nunca inflado por um redirect
+    # encadeado indefinidamente.
+    audit_http_max_redirects: int = 5
+    # 2 MB é generoso para uma página HTML de homepage; conteúdo além disso
+    # é truncado, nunca usado para inferir "site ruim" automaticamente.
+    audit_http_max_response_bytes: int = 2_000_000
+
+    # Identifica o auditor perante o site de terceiro — nunca finge ser um
+    # navegador comum. Sem contato real configurado; operadores devem
+    # substituir por algo com um e-mail/URL de contato antes de auditar em
+    # produção (mesma prática de identificação usada por crawlers legítimos).
+    audit_http_user_agent: str = "ProspectAI-DigitalAudit/1.0"
+
     # --- Reservado para integrações de fases futuras -----------------------
-    # Nenhum destes campos é lido por qualquer código da Fase 0 ou 1. Eles
-    # existem para que a configuração de fases futuras (Digital Audit, Sales
-    # Brief) não exija reestruturar o carregamento de settings.
+    # Nenhum destes campos é lido por qualquer código da Fase 0, 1, 2 ou 3.
+    # Eles existem para que a configuração de fases futuras (Sales Brief)
+    # não exija reestruturar o carregamento de settings.
     google_custom_search_api_key: str | None = None
     google_custom_search_cx: str | None = None
     instagram_graph_access_token: str | None = None

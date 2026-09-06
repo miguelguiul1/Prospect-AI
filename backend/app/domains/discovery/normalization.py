@@ -15,6 +15,54 @@ import phonenumbers
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+# Domínios que NUNCA contam como "site oficial" de uma empresa — nem para
+# efeito de matching de identidade (Fase 2), nem como candidato de auditoria
+# (Fase 3). Vive aqui (não em `identity` ou `audit`) porque é fundamentalmente
+# uma regra de normalização de URL, e os dois domínios acima já dependem
+# deste módulo para outras normalizações. Não é uma lista exaustiva; é o
+# conjunto comum o suficiente para não confundir um perfil de rede social/
+# agregador com o website próprio da empresa.
+UNTRUSTED_WEBSITE_DOMAINS = frozenset(
+    {
+        "instagram.com",
+        "facebook.com",
+        "fb.com",
+        "m.facebook.com",
+        "linktr.ee",
+        "linktree.com",
+        "beacons.ai",
+        "wa.me",
+        "api.whatsapp.com",
+        "whatsapp.com",
+        "maps.google.com",
+        "goo.gl",
+        "g.page",
+        "linkedin.com",
+        "tiktok.com",
+        "twitter.com",
+        "x.com",
+        "youtube.com",
+        "youtu.be",
+    }
+)
+
+
+def extract_hostname(url: str) -> str:
+    """Hostname em minúsculas, sem o prefixo `www.` — só para efeito de
+    comparação/classificação. Nunca usado para alterar a URL armazenada."""
+    host = urlsplit(url).netloc.lower()
+    if "@" in host:  # remove userinfo (user:pass@host), se presente
+        host = host.rsplit("@", 1)[-1]
+    return host[4:] if host.startswith("www.") else host
+
+
+def is_trusted_website(url: str | None) -> bool:
+    """`False` para redes sociais, agregadores de link e afins — mesmo que
+    a URL seja válida, ela não conta como site oficial da empresa."""
+    if not url:
+        return False
+    return extract_hostname(url) not in UNTRUSTED_WEBSITE_DOMAINS
+
 
 def normalize_whitespace(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value)

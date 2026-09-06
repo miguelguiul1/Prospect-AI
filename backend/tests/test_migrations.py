@@ -49,3 +49,19 @@ def test_company_sources_has_coordinate_columns() -> None:
     columns = {c["name"] for c in inspector.get_columns("company_sources")}
 
     assert {"latitude", "longitude"}.issubset(columns)
+
+
+def test_audit_snapshots_has_fase3_columns() -> None:
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("audit_snapshots")}
+
+    assert {"website_url", "site_state", "status", "started_at", "finished_at", "error_code", "error_message"}.issubset(
+        columns
+    )
+
+
+def test_website_quality_snapshots_has_fase3_columns() -> None:
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("website_quality_snapshots")}
+
+    assert {"components", "confidence", "limitations"}.issubset(columns)

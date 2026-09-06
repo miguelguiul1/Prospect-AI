@@ -15,10 +15,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Uuid
+from sqlalchemy import JSON, DateTime
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy import Float, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.domains.audit.enums import AuditStatus
+from app.domains.evidence.enums import ConfidenceLevel, DataState
 
 if TYPE_CHECKING:
     from app.domains.companies.models import Company
@@ -34,9 +38,10 @@ class AuditSnapshot(Base):
     """Uma execução de auditoria digital sobre uma `Company`.
 
     `run_id` correlaciona esta auditoria com os logs/observabilidade da
-    execução que a gerou (arquitetura v0.2, seção 20). `presence_level` é
-    calculado pelo Digital Auditor (Fase 3); nesta fase permanece sempre
-    nulo — a coluna existe para não exigir uma migration destrutiva depois.
+    execução que a gerou (arquitetura v0.2, seção 20). `presence_level`
+    permanece um placeholder — sua semântica na v0.2 (síntese de presença
+    incluindo redes sociais, não só o website) é mais ampla do que o que a
+    Fase 3 avalia; `site_state` é o que o Digital Audit de fato preenche.
     """
 
     __tablename__ = "audit_snapshots"
@@ -46,6 +51,20 @@ class AuditSnapshot(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
 
     presence_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # --- Fase 3 ---------------------------------------------------------
+    website_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    site_state: Mapped[DataState | None] = mapped_column(
+        SAEnum(DataState, native_enum=False, length=20), nullable=True
+    )
+    status: Mapped[AuditStatus] = mapped_column(
+        SAEnum(AuditStatus, native_enum=False, length=20), nullable=False, default=AuditStatus.PENDING
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # ---------------------------------------------------------------------
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
@@ -60,10 +79,13 @@ class AuditSnapshot(Base):
 
 
 class WebsiteQuality(Base):
-    """Placeholder estrutural do Website Quality Score (Fase 3).
+    """Website Quality Score — separado do Opportunity Score (Fase 4).
 
-    `signals` e `score` permanecem nulos até o Digital Auditor calcular os
-    sinais determinísticos descritos na arquitetura v0.2, seção 12.
+    `components` guarda o detalhamento por dimensão (segurança/SEO/
+    conteúdo/UX/técnico); `limitations` registra por que o score pode estar
+    incompleto (ex.: resposta truncada); `confidence` é `None` quando
+    `score` também é `None` (site não confirmado como acessível — ver
+    `app.domains.audit.scoring`).
     """
 
     __tablename__ = "website_quality_snapshots"
@@ -74,6 +96,15 @@ class WebsiteQuality(Base):
     )
     signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # --- Fase 3 ---------------------------------------------------------
+    components: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[ConfidenceLevel | None] = mapped_column(
+        SAEnum(ConfidenceLevel, native_enum=False, length=20), nullable=True
+    )
+    limitations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # ---------------------------------------------------------------------
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     audit_snapshot: Mapped["AuditSnapshot"] = relationship(back_populates="website_quality")
