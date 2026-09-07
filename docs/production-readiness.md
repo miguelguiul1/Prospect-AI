@@ -218,3 +218,26 @@ automática de que as URLs são de fato diferentes entre ambientes (achado
 R14 da auditoria F8.0, não corrigido nesta fase — exigiria decidir uma
 convenção de nomenclatura/tag que só faz sentido quando os dois ambientes
 reais existirem de verdade para testar contra).
+
+## Real Runtime Validation (F8.5)
+
+Estado real de cada dependência externa, nesta sessão — nunca simulado
+como validado quando não foi:
+
+| Dependência | Status | Evidência |
+|---|---|---|
+| PostgreSQL | **NOT VALIDATED (ao vivo)** / VALIDADO EM CI (estrutural, nunca observado rodar) | `tests/infra/test_real_postgres.py` (7 testes: conectividade, versão, todas as tabelas F0-F7, índice parcial real, race condition de stage-change, concorrência de criação de Opportunity) — escrito e pronto, roda de verdade em CI contra um serviço `postgres:16-alpine` real; nunca observado executando nesta sessão (nenhum push foi feito) |
+| Redis | **NOT VALIDATED (ao vivo)** / VALIDADO EM CI (estrutural) | `tests/infra/test_real_redis.py` (5 testes: rate limiter real) + `tests/infra/test_real_worker.py` (novo nesta fase: worker RQ contra Redis real, não `fakeredis`) — mesma situação: pronto, nunca observado rodando |
+| RQ (worker) | **VALIDADO COM MOCK** (fakeredis, F8.2) + estrutural em CI (não observado) | `tests/jobs/test_worker_integration.py` |
+| Anthropic | **NOT VALIDATED — credencial ausente** | `tests/infra/test_real_anthropic.py` (novo): pula automaticamente sem `ANTHROPIC_API_KEY`; se uma chave real for adicionada como GitHub Secret, faz UMA chamada mínima real (poucas dezenas de tokens) para provar conectividade/autenticação — nunca geração em lote. Nenhuma chave foi fornecida em nenhuma fase deste projeto (F0-F8) |
+| PostgreSQL — concorrência (Opportunity, stage-change) | Código escrito e correto (revisão + teste pronto para CI), **nunca executado contra Postgres real nesta sessão** | Mesmo arquivo acima |
+| Redis — restart/reconexão sob operação | **NOT VALIDATED** | Exigiria controlar o ciclo de vida de um processo Redis real (matar/reiniciar), não só verificar presença/ausência — fora do alcance de um teste automatizado sem infraestrutura orquestrável de verdade |
+
+**Resumo honesto**: nenhuma das quatro dependências externas (PostgreSQL,
+Redis, RQ contra Redis real, Anthropic) foi observada funcionando de
+verdade nesta sessão — porque nenhuma delas esteve disponível. O que a
+Fase 8 entrega é a **capacidade de validação real**, pronta e testada
+estruturalmente, que só precisa da infraestrutura existir (e do workflow
+de CI ser observado rodando, o que exige um push) para deixar de ser
+"NOT VALIDATED" e virar "REAL" de verdade — sem reescrever nada quando
+esse dia chegar.

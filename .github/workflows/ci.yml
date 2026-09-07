@@ -74,11 +74,16 @@ jobs:
           DATABASE_URL: postgresql+psycopg://prospect:prospect@localhost:5432/prospect_ai_ci
         run: alembic upgrade head
 
-      - name: Run infra tests against real PostgreSQL + Redis
+      - name: Run infra tests against real PostgreSQL + Redis (+ Anthropic if configured)
         working-directory: backend
         env:
           REAL_POSTGRES_URL: postgresql+psycopg://prospect:prospect@localhost:5432/prospect_ai_ci
           REAL_REDIS_URL: redis://localhost:6379/0
+          # Secret opcional — se não estiver configurado no repositório,
+          # resolve para vazio e tests/infra/test_real_anthropic.py pula
+          # automaticamente (mesmo padrão de Postgres/Redis: nunca simula
+          # uma chamada real sem credencial real). NUNCA logar este valor.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: pytest -q tests/infra -v
 
   frontend:
