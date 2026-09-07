@@ -86,6 +86,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: pytest -q tests/infra -v
 
+      - name: Audit dependencies for known vulnerabilities (Fase 8.9)
+        working-directory: backend
+        run: pip-audit -r requirements.txt
+
   frontend:
     name: Frontend (typecheck + lint + test + build)
     runs-on: ubuntu-latest

@@ -21,12 +21,22 @@ logger = get_logger(__name__)
 _INSECURE_DEFAULT_JWT_SECRET = "dev-insecure-secret-change-me"
 
 
+_MIN_JWT_SECRET_BYTES = 32  # RFC 7518 §3.2: mínimo recomendado para HMAC-SHA256.
+
+
 def _validate_production_config(settings: Settings) -> None:
     """Fail-fast (Fase 8.3): antes desta fase, um JWT secret inseguro ou um
     CORS wildcard em produção só gerava um log de aviso — nada impedia a
     aplicação de subir insegura mesmo assim (achado R5 da auditoria F8.0).
     Chamado antes de qualquer rota existir; levanta `RuntimeError` (o
     processo nunca termina de subir) em vez de logar e seguir em frente.
+
+    A checagem de tamanho mínimo (Fase 8.9) veio de uma evidência real, não
+    de uma regra teórica: o upgrade do PyJWT para 2.13.0 (mesma fase, ver
+    docs/production-readiness.md — Segurança F8.9) passou a emitir
+    `InsecureKeyLengthWarning` para qualquer chave HMAC abaixo de 32 bytes.
+    Sem esta checagem, definir `JWT_SECRET_KEY` como qualquer valor curto
+    (não o default literal) passava pelo fail-fast de qualquer forma.
     """
     if not settings.is_production:
         return
@@ -35,6 +45,14 @@ def _validate_production_config(settings: Settings) -> None:
         raise RuntimeError(
             "JWT_SECRET_KEY não pode ser o valor padrão inseguro em produção "
             "(APP_ENV=production). Defina um valor real (ex.: `openssl rand -hex 32`) "
+            "antes de subir a aplicação."
+        )
+
+    if len(settings.jwt_secret_key.encode("utf-8")) < _MIN_JWT_SECRET_BYTES:
+        raise RuntimeError(
+            f"JWT_SECRET_KEY tem menos de {_MIN_JWT_SECRET_BYTES} bytes em produção "
+            "(APP_ENV=production) — abaixo do mínimo recomendado pela RFC 7518 §3.2 "
+            "para HMAC-SHA256. Defina um valor real (ex.: `openssl rand -hex 32`) "
             "antes de subir a aplicação."
         )
 

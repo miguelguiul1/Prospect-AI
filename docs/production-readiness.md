@@ -509,3 +509,99 @@ Staging/Production já documentada na F8.4.
 
 **521 passed, 15 skipped, 0 failed** (518 pré-existentes + 2 novos de
 `test_migrations_roundtrip.py` + 1 novo de `test_backup_restore.py`).
+
+## Hardening de Produção + Auditoria de Segurança Final (F8.9)
+
+### Vulnerabilidades de dependências (achado real desta fase)
+
+`pip-audit` (novo, dev-only, `requirements-dev.txt`) rodado pela primeira
+vez neste projeto contra `requirements.txt`: encontrou **12 avisos reais**
+(via OSV/GHSA), todos em **PyJWT 2.10.1** — nenhum em nenhuma outra
+dependência de produção. Cada um foi analisado individualmente contra o
+uso real deste projeto (`app/domains/auth/security.py`: sempre
+`jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])`,
+HS256 com um único segredo simétrico, nunca `PyJWK`/`PyJWKClient`, nunca
+payload destacado/`b64=false`), não apenas lido do título do CVE:
+
+| CVE | O que é | Explorável neste projeto? |
+|---|---|---|
+| CVE-2026-32597 (bypass de header `crit`) | Aceita token com extensão `crit` desconhecida | **Não** — confirmado empiricamente (script de PoC executado nesta sessão): só é alcançável por quem já sabe forjar uma assinatura HMAC válida, ou seja, já precisa do `JWT_SECRET_KEY` — nesse ponto já pode forjar qualquer claim de qualquer forma |
+| CVE-2025-45768 (chave "fraca", disputado pelo fornecedor) | Tamanho de chave é escolha da aplicação, não da lib | Endereçado de qualquer forma (ver abaixo) — a checagem de tamanho mínimo em produção não existia |
+| CVE-2026-48526/48523 (confusão de algoritmo via `PyJWK`) | Requer `PyJWK`/mistura de algoritmos simétrico+assimétrico | **Não** — nunca usado |
+| CVE-2026-48522/48524 (SSRF/DoS via `PyJWKClient`) | Requer `PyJWKClient` buscando JWKS remoto | **Não** — nunca usado (não há verificação de token de terceiros) |
+| CVE-2026-48525 (DoS via payload destacado `b64=false`) | Decodifica um segmento grande antes de rejeitar | **Testado empiricamente nesta sessão** contra a chamada real do projeto (sem `detached_payload`): rejeita em `DecodeError` imediato, sem o custo amplificado descrito no CVE (2,26ms para 1MB de payload, não segundos) |
+
+**Ação tomada mesmo assim**: `PyJWT` atualizado de `2.10.1` para `2.13.0`
+(zero vulnerabilidades conhecidas após o upgrade, confirmado por
+`pip-audit`) — nenhuma das CVEs era explorável no uso específico deste
+projeto, mas a atualização é de baixo risco (suíte completa re-executada
+sem nenhuma regressão) e elimina o ruído de auditoria/risco futuro caso o
+padrão de uso mude. `pip-audit -r requirements.txt` adicionado ao CI
+(`.github/workflows/ci.yml`, novo step no job `backend`) como equivalente
+do `npm audit --audit-level=critical` já existente para o frontend desde
+F8.1 — nunca observado rodando de verdade (nenhum push foi feito), mas
+validado manualmente com sucesso nesta sessão.
+
+**Achado adicional, descoberto pelo próprio upgrade**: PyJWT 2.13.0 passou
+a emitir `InsecureKeyLengthWarning` para qualquer chave HMAC abaixo de 32
+bytes (RFC 7518 §3.2) — rodar a suíte após o upgrade revelou isso na
+prática, não por leitura de changelog. `_validate_production_config`
+(`app/main.py`, Fase 8.3) só rejeitava o valor padrão literal, não
+qualquer segredo curto — um `JWT_SECRET_KEY` de 10 caracteres não-default
+passava pelo fail-fast em produção. Corrigido: agora também rejeita
+qualquer `JWT_SECRET_KEY` com menos de 32 bytes em produção, com um teste
+novo (`test_production_with_a_short_secret_below_32_bytes_fails_fast`).
+
+`npm audit` (frontend): **0 vulnerabilidades**, em qualquer nível de
+severidade — reconfirmado nesta fase, sem mudanças necessárias.
+
+### Re-verificação do checklist OWASP (contra o estado pós-F8.1-F8.8)
+
+Não repetido do zero — cada item foi checado especificamente contra o que
+mudou nas fases F8.1-F8.8, já que a auditoria original (F7.5/F8.0) e o
+hardening (F8.3) continuam sendo a referência de linha de base:
+
+| Item | Estado após F8 |
+|---|---|
+| IDOR | Nenhum endpoint novo em F8 toca recurso pertencente a usuário — `/metrics` e `/health*` são infraestrutura pública, sem dado de negócio. Cobertura extensiva de IDOR de F7.5 permanece válida, sem mudança de superfície. |
+| Mass assignment | Sem mudança — schemas Pydantic explícitos continuam sendo a única forma de entrada em toda rota. |
+| Escalação de privilégio | Sem mudança — modelo de usuário permanece flat (sem papéis/permissões), nenhuma rota de F8 introduz um conceito novo de autorização. |
+| SQL Injection | Sem mudança em código de produção — a única interpolação de string em SQL bruto do projeto inteiro é em `tests/infra/test_real_postgres.py` (F8.1), em um nome de tabela gerado internamente por `uuid4()`, nunca por entrada de usuário, nunca exposto por nenhuma rota. |
+| XSS | Sem mudança — backend é API JSON pura; nenhuma alteração de frontend nesta fase além de headers (`next.config.ts`, F8.3). |
+| CSRF | Sem mudança — arquitetura Bearer-token-via-servidor-Next.js permanece estruturalmente imune, reavaliada em F8.3. |
+| SSRF | Sem mudança — nenhuma rota nova de F8 busca uma URL fornecida por request; a superfície existente (Discovery/Digital Audit, F1/F3) não foi tocada. |
+| Prompt injection / segurança de IA | Ver seção dedicada abaixo. |
+| CORS | Sem mudança desde o fail-fast de F8.3. |
+| Headers de segurança | Sem mudança desde F8.3; testado em `test_security_hardening.py`. |
+| Cookies | Sem mudança desde a revisão de F8.3. |
+| Rate limiting | Re-verificado sob carga real de concorrência em F8.7 (`local_fallback` thread-safe sob 20 threads reais), não só em teste sequencial. |
+| Segredos | `.env.example` nunca contém valor real; `ANTHROPIC_API_KEY` nunca logado (`tests/infra/test_real_anthropic.py` verifica isso explicitamente); `JWT_SECRET_KEY` ganhou a checagem de tamanho mínimo nesta fase (ver acima). |
+| Vulnerabilidades de dependência | Ver seção acima — achado real, corrigido. |
+| Vazamento de erro | Re-verificado especificamente em F8.7 (`test_failure_injection.py`): uma falha de banco no meio de uma rota de negócio comum devolve 500 limpo, sem tipo/mensagem de exceção real. |
+| Limite de requisição | Sem mudança desde F8.3; `RequestSizeLimitMiddleware` continua ativo. |
+| Upload de arquivo | Não aplicável — o projeto não tem nenhum endpoint de upload, em nenhuma fase. |
+
+### Segurança de IA re-verificada (Assisted Outreach continua Level 1)
+
+Confirmado por leitura de código (`app/domains/outreach/`,
+`app/domains/briefing/`) que nenhuma mudança de F8.1-F8.8 tocou a
+construção de prompt, a lógica de grounding (só contatos verificados, só
+evidência já coletada) ou a validação de saída de nenhum dos dois
+domínios de IA — as únicas mudanças foram observabilidade (métricas de
+`ai_requests_total`/`ai_tokens_total`, F8.6) e rate limiting (F8.3), nunca
+o conteúdo gerado ou o que é aceito como entrada.
+
+**Confirmado explicitamente que nenhum mecanismo de envio automático foi
+introduzido**: busca por bibliotecas de envio (`smtplib`, SDKs de
+email/WhatsApp/SMS) em `app/domains/outreach` e `app/domains/briefing`
+não encontra nenhuma — o único uso da palavra "whatsapp" no código é um
+valor de enum (`OutreachChannel.WHATSAPP`, Fase 7) que rotula o
+**canal que o humano escolherá para enviar manualmente**, nunca uma
+integração de envio automatizado. "Assisted Outreach Level 1" continua
+sendo exatamente isso: o sistema gera um rascunho, o humano decide se e
+como enviar.
+
+### Regressão final da F8.9
+
+**522 passed, 15 skipped, 0 failed** (521 pré-existentes + 1 novo teste
+de validação de tamanho de segredo).

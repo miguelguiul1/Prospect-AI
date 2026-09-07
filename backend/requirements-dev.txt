@@ -4,3 +4,12 @@ pytest==9.1.1
 # limiter, RQ) sem precisar de um servidor real — nunca usado em produção,
 # nunca confundido com Redis real (ver tests/jobs/, tests/infra/). Fase 8.2.
 fakeredis==2.31.3
+# Scanner de vulnerabilidades conhecidas (OSV) nas dependências de
+# produção — equivalente backend do `npm audit` já usado no CI do
+# frontend desde a Fase 8.1. Achou 12 avisos reais em PyJWT 2.10.1 na
+# primeira execução (Fase 8.9); nenhum explorável no uso específico deste
+# projeto (HS256 com segredo único, nunca PyJWK/PyJWKClient/payload
+# destacado — ver docs/production-readiness.md), mas o pacote foi
+# atualizado mesmo assim (para 2.13.0, sem nenhuma vulnerabilidade
+# conhecida) para eliminar o ruído e reduzir a superfície de risco futura.
+pip-audit==2.10.1

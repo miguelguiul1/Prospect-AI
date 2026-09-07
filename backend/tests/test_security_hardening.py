@@ -23,6 +23,15 @@ class TestProductionConfigValidation:
         settings = Settings(app_env="production", jwt_secret_key="um-segredo-real-gerado-com-openssl")
         _validate_production_config(settings)  # não levanta
 
+    def test_production_with_a_short_secret_below_32_bytes_fails_fast(self) -> None:
+        """Fase 8.9: evidência real de que isto importava veio do upgrade do
+        PyJWT para 2.13.0, que passou a emitir `InsecureKeyLengthWarning`
+        para chaves HMAC abaixo de 32 bytes — antes desta checagem, qualquer
+        valor curto que não fosse o default literal passava pelo fail-fast."""
+        settings = Settings(app_env="production", jwt_secret_key="curto-demais")
+        with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"):
+            _validate_production_config(settings)
+
     def test_production_with_cors_wildcard_fails_fast(self) -> None:
         settings = Settings(
             app_env="production",
