@@ -241,3 +241,90 @@ estruturalmente, que só precisa da infraestrutura existir (e do workflow
 de CI ser observado rodando, o que exige um push) para deixar de ser
 "NOT VALIDATED" e virar "REAL" de verdade — sem reescrever nada quando
 esse dia chegar.
+
+## Observabilidade (F8.6)
+
+**Antes desta fase**: nenhuma métrica existia (achado R9 da auditoria
+F8.0); `/health/dependencies` marcava `status="degraded"` para uma falha
+de Redis — uma dependência tratada como best-effort em todo o resto do
+sistema (fail-open no rate limiter, cache que degrada graciosamente) —
+inconsistência confirmada na própria F8.0; nenhum log de job carregava
+`job_id`; nenhum log de requisição autenticada carregava `user_id`.
+
+**Registro de métricas em processo** (`app/core/metrics.py`, novo,
+**zero dependências novas** — decisão deliberada de não trazer
+`prometheus_client` para um projeto deste porte): contadores e
+histogramas simples, thread-safe (`threading.Lock`), expostos em
+formato de texto Prometheus por `GET /metrics` (`app/api/routes/metrics.py`,
+sem autenticação — mesmo padrão de `/health`, é infraestrutura de
+observabilidade, não dado de negócio). `reset()` existe só para uso em
+teste.
+
+Métricas instrumentadas:
+
+| Métrica | Labels | Onde |
+|---|---|---|
+| `http_requests_total` | `method`, `path` (template de rota, nunca o path resolvido — evita cardinalidade não limitada por UUID real), `status` (`2xx`/`4xx`/`5xx`) | `RequestContextMiddleware` |
+| `http_request_duration_ms` (histograma simples: soma + contagem) | `method`, `path` | `RequestContextMiddleware` |
+| `ai_requests_total` | `domain` (`sales_brief`/`outreach`), `status` (`completed`/`failed`) | `SalesBriefService`, `OutreachService` |
+| `ai_tokens_total` | `domain`, `direction` (`input`/`output`) | Mesmos dois serviços, só quando o provider reporta contagem de tokens |
+| `auth_failures_total` | `reason` (`missing_token`/`invalid_token`/`user_not_found_or_inactive`) | `app.domains.auth.dependencies._unauthorized` |
+| `rate_limit_redis_unavailable_total` | `policy` (`fail_open`/`fail_closed`/`local_fallback`) | `check_and_increment`, ramo de exceção |
+
+Validação: **VALIDADO ESTATICAMENTE + suíte própria** —
+`tests/test_metrics.py` (7 testes) prova o registro isoladamente
+(incremento, agregação por label, renderização, reset) e via
+`GET /metrics` de ponta a ponta (contagem real de `http_requests_total`
+e `auth_failures_total` após requisições reais ao `TestClient`). Nunca
+testado contra um Prometheus real fazendo scrape — não há Prometheus
+nesta sessão; o formato de saída segue a especificação de texto exposto
+do Prometheus por leitura da documentação, não por validação cruzada com
+o parser oficial.
+
+**Readiness redesenhado** (`GET /health/dependencies`, achado F8.0 R9
+corrigido): antes, qualquer falha (banco OU Redis) produzia o mesmo
+`status="degraded"`, sem diferenciar severidade. Agora:
+
+- **PostgreSQL indisponível** → único caso que retorna HTTP 503 e
+  `status="not_ready"` — é a única dependência sem a qual o sistema não
+  serve nenhuma requisição real.
+- **Redis indisponível** → reportado como `"degraded: <TipoDoErro>"` no
+  campo `redis`, mas **nunca** rebaixa o `status` geral nem o HTTP code
+  (continua 200/`"ok"`) — consistente com o fail-open já usado em todo o
+  resto do sistema (rate limiter, cache de Discovery).
+- **Anthropic** → reportado apenas como `"configured"`/`"not_configured"`
+  (presença da variável de ambiente). Deliberadamente **sem nenhuma
+  chamada de rede real** — um readiness probe chamado a cada poucos
+  segundos por um orquestrador não deve gerar custo ou latência de API
+  externa a cada verificação.
+
+Esta é uma **mudança de comportamento intencional** de um teste
+pré-existente (`tests/test_health.py`): a expectativa antiga
+(`status=="degraded"`, `"error:"`) estava documentando o comportamento
+antigo incorreto, não um contrato correto — corrigida para
+`status=="ok"`/`"degraded:"`, com dois testes novos cobrindo o caso de
+banco indisponível (503/`not_ready`, simulado via `monkeypatch` no
+`Session.execute`, sem precisar de um Postgres real quebrado) e a
+ausência de chamada de rede ao checar Anthropic.
+
+**Correlação de logs**: `bind_request_context(user_id=...)` chamado em
+`get_current_user` logo após autenticação bem-sucedida — todo log
+subsequente da requisição carrega o usuário responsável, sem precisar
+reconstruir isso a partir do `request_id` e de uma consulta separada.
+`bind_job_context()` (novo, `app.jobs.queue`) usa `rq.get_current_job()`
+para vincular `job_id`/`queue_name` a todo log emitido dentro de um
+`run_*` de Discovery/Digital Audit/Sales Brief — só tem efeito dentro de
+um worker real; no fallback síncrono (`get_current_job()` retorna
+`None`), o `request_id` do middleware HTTP já é a correlação válida.
+
+**O que continua fora de escopo**: nenhum sistema de alertas, nenhum
+dashboard, nenhum agregador de logs (ELK/Loki), nenhum tracing
+distribuído — nenhum dos quatro se justifica para um projeto deste porte
+sem um operador real por trás; o `/metrics` em texto Prometheus é
+suficiente para um `docker compose` com Prometheus apontado para ele
+quando esse dia chegar, sem exigir reescrita.
+
+Regressão completa após F8.6: **514 passed, 15 skipped, 0 failed**
+(507 pré-existentes + 7 novos de `tests/test_metrics.py`; a mudança
+intencional em `test_health.py` está incluída nesses 514, não é uma
+falha).

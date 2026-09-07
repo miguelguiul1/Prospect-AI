@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
-from app.jobs.queue import get_queue
+from app.jobs.queue import bind_job_context, get_queue
 
 logger = get_logger(__name__)
 
@@ -32,6 +32,7 @@ def run_digital_audit(audit_snapshot_id: str) -> None:
     """Corpo do job para execução em um processo separado (worker do RQ):
     abre sua própria sessão. Importável isoladamente por referência de
     módulo, como o RQ exige para serializar o job."""
+    bind_job_context()
     from app.domains.audit.service import DigitalAuditService  # import tardio: evita ciclo
 
     db = SessionLocal()

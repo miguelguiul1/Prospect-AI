@@ -19,11 +19,23 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.core import metrics
 from app.core.logging import bind_request_context, clear_request_context, get_logger
 
 logger = get_logger(__name__)
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+
+def _route_template(request: Request) -> str:
+    """Template da rota (ex.: `/api/crm/opportunities/{opportunity_id}`),
+    nunca o path resolvido (que teria um UUID novo por requisição) — usar o
+    path resolvido como label de métrica criaria cardinalidade sem limite,
+    um dos erros mais comuns ao instrumentar uma API com IDs na URL."""
+    route = request.scope.get("route")
+    if route is not None and hasattr(route, "path"):
+        return route.path
+    return request.url.path  # sem rota casada (404) — path bruto é aceitável aqui
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -42,6 +54,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 duration_ms=duration_ms,
             )
+            metrics.increment("http_requests_total", {"method": request.method, "path": _route_template(request), "status": "5xx"})
             raise
         else:
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -52,6 +65,10 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 duration_ms=duration_ms,
             )
+            status_class = f"{response.status_code // 100}xx"
+            route_path = _route_template(request)
+            metrics.increment("http_requests_total", {"method": request.method, "path": route_path, "status": status_class})
+            metrics.observe("http_request_duration", duration_ms, {"method": request.method, "path": route_path})
             response.headers[REQUEST_ID_HEADER] = request_id
             return response
         finally:

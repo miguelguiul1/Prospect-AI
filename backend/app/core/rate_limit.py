@@ -29,6 +29,7 @@ import time
 from collections import defaultdict
 from typing import Literal
 
+from app.core import metrics
 from app.core.logging import get_logger
 from app.jobs.queue import get_redis_connection
 
@@ -99,6 +100,10 @@ def check_and_increment(
             policy=on_unavailable,
             error_type=exc.__class__.__name__,
         )
+        # Métrica dedicada (Fase 8.6) — é exatamente a condição que a
+        # auditoria F7.5/F8.0 apontou como invisível fora do log: sem isto,
+        # ninguém sabe que o rate limiting está degradado até ler logs à mão.
+        metrics.increment("rate_limit_redis_unavailable_total", {"policy": on_unavailable})
         if on_unavailable == "fail_closed":
             return False
         if on_unavailable == "local_fallback":

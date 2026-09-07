@@ -14,6 +14,7 @@ from app.api.routes import (
     discovery,
     health,
     identity,
+    metrics,
     outreach,
     prototypes,
     sales_brief,
@@ -22,6 +23,7 @@ from app.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(metrics.router)
 api_router.include_router(auth.router)
 api_router.include_router(discovery.router)
 api_router.include_router(identity.router)

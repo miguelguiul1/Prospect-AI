@@ -19,6 +19,7 @@ import uuid
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core import metrics
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.domains.briefing.providers import get_provider
@@ -109,6 +110,7 @@ class OutreachService:
                 opportunity_id=str(opportunity.id),
                 error_code=exc.__class__.__name__,
             )
+            metrics.increment("ai_requests_total", {"domain": "outreach", "status": "failed"})
             raise OutreachGenerationError(str(exc)) from exc
 
         outreach = Outreach(
@@ -147,6 +149,11 @@ class OutreachService:
             outreach_id=str(outreach.id),
             provider=outreach.provider,
         )
+        metrics.increment("ai_requests_total", {"domain": "outreach", "status": "completed"})
+        if outreach.input_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": "outreach", "direction": "input"}, outreach.input_tokens)
+        if outreach.output_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": "outreach", "direction": "output"}, outreach.output_tokens)
         return outreach
 
     def _validate_content(self, raw_text: str) -> OutreachContent:

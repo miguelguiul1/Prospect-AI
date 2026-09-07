@@ -18,6 +18,7 @@ import uuid
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core import metrics
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.domains.audit.models import AuditSnapshot
@@ -151,6 +152,11 @@ class SalesBriefService:
             provider=brief.provider,
             model=brief.model,
         )
+        metrics.increment("ai_requests_total", {"domain": "sales_brief", "status": "completed"})
+        if brief.input_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": "sales_brief", "direction": "input"}, brief.input_tokens)
+        if brief.output_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": "sales_brief", "direction": "output"}, brief.output_tokens)
         return brief
 
     def _validate_content(self, raw_text: str) -> SalesBriefContent:
@@ -194,6 +200,7 @@ class SalesBriefService:
             opportunity_score_id=str(opportunity_score_id),
             error_code=error_code,
         )
+        metrics.increment("ai_requests_total", {"domain": "sales_brief", "status": "failed"})
         return brief
 
     def get_latest(self, company_id: uuid.UUID) -> SalesBrief | None:
