@@ -64,3 +64,45 @@ principal nunca conseguiu testar (só o inverso — Redis ausente → fail-open,
 extensivamente testado desde F7): com Redis presente, o rate limiter
 realmente permite dentro do limite, realmente bloqueia acima dele,
 realmente expira a janela, e isola corretamente chaves diferentes.
+
+## RQ Worker (F8.2)
+
+**Antes desta fase, não existia nenhum processo consumindo as filas Redis**
+(achado da auditoria F8.0, seção 10) — as classes `DiscoveryJob`/
+`DigitalAuditJob`/`SalesBriefJob` declaradas desde a Fase 0 nunca foram
+instanciadas por nenhum código real; todo `queue.enqueue(...)` sempre
+chamou uma função de módulo simples diretamente. Essas classes (e a
+abstração `app.jobs.base.Job`/`JobContext` que as sustentava) foram
+**removidas** nesta fase — eram código morto que documentava um mecanismo
+de retry/correlação que nunca esteve conectado a nada; mantê-las seria
+mais enganoso do que não ter nada.
+
+`backend/app/worker.py` é o entrypoint real (`python -m app.worker`):
+conecta ao Redis configurado e processa as três filas reais do projeto
+(`discovery`, `audit`, `briefing` — nomes sincronizados manualmente com a
+constante `QUEUE_NAME` em cada `app/domains/*/jobs.py`, e verificados por
+teste, ver abaixo). Sem retry automático por padrão, mesma decisão
+deliberada de cada domínio (evitar duplicar uma chamada paga a uma API
+externa). Shutdown gracioso vem de graça da própria biblioteca RQ
+(SIGINT/SIGTERM já tratados por `Worker.work()`) — nenhum código de sinal
+próprio foi adicionado.
+
+Registrado como serviço `worker` em `docker-compose.yml` (Fase 8.2/8.4),
+reaproveitando a mesma imagem do backend com um `command` diferente.
+
+**Validação (nunca simulada como real):**
+
+- `tests/jobs/test_worker_integration.py` — **VALIDADO COM MOCK**
+  (`fakeredis`, dependência de teste em `requirements-dev.txt`, nunca de
+  produção). Prova, pela primeira vez no projeto: um job enfileirado é
+  realmente executado por um worker; um worker ouvindo outra fila nunca o
+  pega; uma falha marca o job como `FAILED` sem perder o erro, sem retry
+  automático; os nomes de fila do worker e de cada domínio batem
+  exatamente (teste dedicado de consistência, para nunca mais silenciosamente
+  esquecer uma fila nova aqui).
+- Execução real do worker contra Redis real: **NÃO VALIDADO** — sem Redis
+  disponível nesta máquina. O workflow de CI (F8.1) provisiona Redis real
+  como serviço, mas ainda não inclui uma etapa que suba `app.worker` e
+  enfileire um job real de ponta a ponta — isso é uma extensão natural e
+  pequena para quando o workflow for observado rodando pela primeira vez,
+  não implementada agora para não expandir escopo sem necessidade.

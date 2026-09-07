@@ -1,2 +1,6 @@
 -r requirements.txt
 pytest==9.1.1
+# Fake in-memory Redis para testar código dependente de Redis (rate
+# limiter, RQ) sem precisar de um servidor real — nunca usado em produção,
+# nunca confundido com Redis real (ver tests/jobs/, tests/infra/). Fase 8.2.
+fakeredis==2.31.3

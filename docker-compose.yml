@@ -1,14 +1,17 @@
-# Ambiente de desenvolvimento local da Fase 0 — Foundation.
+# Ambiente de desenvolvimento/staging local integrado — criado na Fase 0,
+# estendido na Fase 8 (worker RQ real).
 #
 # Fica na raiz do repositório (não em infra/) de propósito, para que
 # `docker compose up` funcione diretamente a partir daqui, sem flag `-f`.
 # Ver infra/README.md para a justificativa completa dessa escolha.
 #
-# IMPORTANTE: este arquivo não foi executado nesta implementação porque a
-# máquina usada para a Fase 0 não tem Docker instalado. A sintaxe e as
-# variáveis foram revisadas manualmente, mas `docker compose up` ainda
-# precisa ser validado por alguém com Docker disponível antes de considerar
-# este critério de conclusão fechado. Ver README.md.
+# IMPORTANTE: este arquivo AINDA não foi executado em nenhuma sessão deste
+# projeto (Fases 0-8) porque nenhuma máquina usada até aqui tem Docker
+# instalado — confirmado repetidamente, mais recentemente na auditoria
+# F8.0. A sintaxe foi validada estruturalmente (parse YAML sem erro) e cada
+# variável/comando foi revisado manualmente, mas `docker compose up` ainda
+# precisa ser validado por alguém com Docker disponível antes deste
+# critério ser considerado fechado. Ver docs/production-readiness.md.
 
 services:
   postgres:
@@ -46,6 +49,28 @@ services:
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  worker:
+    # Fase 8.2 — antes desta fase não existia NENHUM processo consumindo as
+    # filas Redis (discovery/audit/briefing); um job "enfileirado" ficava
+    # parado para sempre, mesmo com Redis disponível (achado da auditoria
+    # F8.0, seção 10). Reaproveita a MESMA imagem do backend — é o mesmo
+    # código, só um entrypoint diferente (`python -m app.worker`), não um
+    # serviço/deploy separado.
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-prospect}:${POSTGRES_PASSWORD:-prospect}@postgres:5432/${POSTGRES_DB:-prospect_ai}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
         condition: service_healthy

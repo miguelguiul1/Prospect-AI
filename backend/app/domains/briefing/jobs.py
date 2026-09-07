@@ -1,4 +1,4 @@
-"""Integração do Sales Brief com a abstração de jobs da Fase 0.
+"""Integração do Sales Brief com a fila RQ (Fase 0, worker real Fase 8).
 
 Mesmo padrão de `app.domains.discovery.jobs`/`app.domains.audit.jobs`:
 `enqueue_or_run_sales_brief` tenta enfileirar no RQ; se a fila estiver
@@ -6,29 +6,25 @@ indisponível, executa de forma síncrona. Faz sentido enfileirar o Sales
 Brief especificamente porque, ao contrário do Opportunity Score, ele chama
 uma API externa (Anthropic) e pode ser lento — o mesmo motivo que já levou
 Discovery e Digital Audit a seguir este padrão.
+
+Sem retry automático: o provider de IA nunca é retentado automaticamente
+(ver providers/errors.py) — um retry de job inteiro poderia gerar uma
+segunda chamada paga à Anthropic para o mesmo pedido sem necessidade.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
-from app.jobs.base import Job, JobContext
 from app.jobs.queue import get_queue
 
 logger = get_logger(__name__)
 
-
-class SalesBriefJob(Job):
-    name = "briefing.generate_sales_brief"
-    max_retries = 0  # o provider de IA nunca é retentado automaticamente (ver providers/errors.py).
-
-    def run(self, context: JobContext, **kwargs: Any) -> None:
-        company_id = kwargs["company_id"]
-        run_sales_brief(company_id)
+# Nome da fila lido por `app.worker` (Fase 8.2).
+QUEUE_NAME = "briefing"
 
 
 def run_sales_brief(company_id: str) -> None:
@@ -58,7 +54,7 @@ def enqueue_or_run_sales_brief(company_id: uuid.UUID, *, db: Session | None = No
     ainda não commitados na primeira (mesmo motivo de `app.domains.audit.jobs`).
     """
     try:
-        queue = get_queue("briefing")
+        queue = get_queue(QUEUE_NAME)
         queue.enqueue(run_sales_brief, str(company_id))
         return "queued"
     except Exception as exc:  # noqa: BLE001 - fila indisponível é um modo operacional válido aqui

@@ -1,42 +1,39 @@
-"""Integração do Discovery com a abstração de jobs da Fase 0.
+"""Integração do Discovery com a fila RQ (Fase 0, worker real Fase 8).
 
 `enqueue_or_run_discovery` tenta enfileirar no RQ (Redis); se a fila não
-estiver acessível — como nesta máquina de desenvolvimento, que não tem
-Redis instalado (ver docs/development.md) — executa a mesma lógica de
-forma síncrona, em vez de travar ou derrubar a requisição. Isso é um modo
-de execução documentado, não uma substituição do Redis pela arquitetura:
-em produção, com Redis disponível, o caminho enfileirado é sempre o usado.
+estiver acessível — como em toda máquina de desenvolvimento usada neste
+projeto até aqui, que não tem Redis instalado (ver docs/development.md) —
+executa a mesma lógica de forma síncrona, em vez de travar ou derrubar a
+requisição. Isso é um modo de execução documentado, não uma substituição do
+Redis pela arquitetura: em produção, com Redis E um worker real (`app.worker`,
+Fase 8.2) disponíveis, o caminho enfileirado é sempre o usado.
 
 Duas formas de rodar a busca síncrona:
 
 - Com uma sessão já aberta (`db=...`, o caso do endpoint HTTP): reaproveita
   exatamente essa sessão/conexão, para não divergir do que a requisição já
   viu ou gravou na mesma transação.
-- Sem sessão (`db=None`, o caso de um worker do RQ real, que roda em outro
+- Sem sessão (`db=None`, o caso do worker real do RQ, que roda em outro
   processo): abre sua própria sessão via `SessionLocal`.
+
+Sem retry automático: retries de rede já acontecem dentro do provider
+(Fase 1); um retry de job inteiro poderia duplicar chamadas pagas à API de
+descoberta sem necessidade.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
-from app.jobs.base import Job, JobContext
 from app.jobs.queue import get_queue
 
 logger = get_logger(__name__)
 
-
-class DiscoveryJob(Job):
-    name = "discovery.run_search"
-    max_retries = 0  # retries de rede já acontecem dentro do provider.
-
-    def run(self, context: JobContext, **kwargs: Any) -> None:
-        search_run_id = kwargs["search_run_id"]
-        run_discovery_search(search_run_id)
+# Nome da fila lido por `app.worker` (Fase 8.2).
+QUEUE_NAME = "discovery"
 
 
 def run_discovery_search(search_run_id: str) -> None:
@@ -66,7 +63,7 @@ def enqueue_or_run_discovery(search_run_id: uuid.UUID, *, db: Session | None = N
     que não enxergaria dados ainda não commitados na primeira.
     """
     try:
-        queue = get_queue("discovery")
+        queue = get_queue(QUEUE_NAME)
         queue.enqueue(run_discovery_search, str(search_run_id))
         return "queued"
     except Exception as exc:  # noqa: BLE001 - fila indisponível é um modo operacional válido aqui

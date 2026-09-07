@@ -1,34 +1,31 @@
-"""Integração do Digital Audit com a abstração de jobs da Fase 0.
+"""Integração do Digital Audit com a fila RQ (Fase 0, worker real Fase 8).
 
 Mesmo padrão de `app.domains.discovery.jobs` (Fase 1): `enqueue_or_run_audit`
 tenta enfileirar no RQ; se a fila estiver indisponível, executa de forma
 síncrona — com a sessão já aberta pela requisição HTTP quando fornecida, ou
-abrindo uma própria (caso de um worker real do RQ, em outro processo).
-Redis continua sendo a arquitetura oficial; isto é só um fallback
-operacional documentado, não uma substituição.
+abrindo uma própria (caso do worker real do RQ, em outro processo — ver
+`app.worker`, Fase 8.2). Redis continua sendo a arquitetura oficial; isto é
+só um fallback operacional documentado, não uma substituição.
+
+Sem retry automático (mesma decisão de F1/F4): retries de rede já acontecem
+dentro de `fetch_safely`; um retry de job inteiro poderia reexecutar uma
+auditoria parcialmente aplicada de forma não idempotente sem necessidade.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.session import SessionLocal
-from app.jobs.base import Job, JobContext
 from app.jobs.queue import get_queue
 
 logger = get_logger(__name__)
 
-
-class DigitalAuditJob(Job):
-    name = "audit.run_digital_audit"
-    max_retries = 0  # retries de rede já acontecem dentro de fetch_safely.
-
-    def run(self, context: JobContext, **kwargs: Any) -> None:
-        audit_snapshot_id = kwargs["audit_snapshot_id"]
-        run_digital_audit(audit_snapshot_id)
+# Nome da fila lido por `app.worker` (Fase 8.2) — mudar aqui sem atualizar
+# lá deixaria jobs enfileirados sem nenhum worker os consumindo.
+QUEUE_NAME = "audit"
 
 
 def run_digital_audit(audit_snapshot_id: str) -> None:
@@ -58,7 +55,7 @@ def enqueue_or_run_audit(audit_snapshot_id: uuid.UUID, *, db: Session | None = N
     conexão que não enxergaria dados ainda não commitados na primeira.
     """
     try:
-        queue = get_queue("audit")
+        queue = get_queue(QUEUE_NAME)
         queue.enqueue(run_digital_audit, str(audit_snapshot_id))
         return "queued"
     except Exception as exc:  # noqa: BLE001 - fila indisponível é um modo operacional válido aqui
