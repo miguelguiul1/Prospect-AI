@@ -119,13 +119,14 @@ export async function getPrototype(id: string): Promise<PrototypeDetail> {
 
 /**
  * `company_id` é obrigatório no backend desde o Prompt 10 (Fase 9 precisa
- * saber de qual empresa puxar contexto) — `NewPrototypeDialog`
- * (`components/prototype-builder/new-prototype-dialog.tsx`) ainda não
- * coleta um `company_id` (fluxo standalone herdado da Fase 6, sem nenhum
- * seletor de empresa). Até uma fase futura adicionar um ponto de entrada
- * com contexto de empresa, chamar esta função sem `companyId` retorna 422
- * do backend — ver docs/prototype-builder.md, seção "Consequência
- * conhecida no frontend".
+ * saber de qual empresa puxar contexto). `NewPrototypeDialog`
+ * (`components/prototype-builder/new-prototype-dialog.tsx`, fluxo
+ * standalone herdado da Fase 6) continua sem um seletor de empresa —
+ * chamar esta função a partir de lá sem `companyId` ainda retorna 422 do
+ * backend. O ponto de entrada real com contexto de empresa chegou no
+ * Prompt 11: `generatePrototypeAction`
+ * (`app/prospects/[companyId]/actions.ts`) chama esta função a partir da
+ * página de detalhe do prospect, onde `companyId` já está disponível.
  */
 export async function createPrototype(input: {
   name: string;
@@ -168,4 +169,57 @@ export async function updatePrototype(
 
 export async function deletePrototype(id: string): Promise<void> {
   await apiDelete(`/api/prototypes/${id}`);
+}
+
+interface GenerationRunResponse {
+  id: string;
+  prototype_id: string;
+  company_id: string;
+  status: "pending" | "succeeded" | "failed";
+  provider: string | null;
+  model: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  grounding_warnings: string[] | null;
+  created_at: string;
+  completed_at: string | null;
+  execution_mode: string | null;
+}
+
+export interface GenerationRun {
+  id: string;
+  prototypeId: string;
+  status: "pending" | "succeeded" | "failed";
+  errorMessage: string | null;
+  groundingWarnings: string[] | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+function toGenerationRun(response: GenerationRunResponse): GenerationRun {
+  return {
+    id: response.id,
+    prototypeId: response.prototype_id,
+    status: response.status,
+    errorMessage: response.error_message,
+    groundingWarnings: response.grounding_warnings,
+    createdAt: response.created_at,
+    completedAt: response.completed_at,
+  };
+}
+
+/** Dispara a geração por IA (Fase 9 / Prompt 11) — síncrona nesta máquina
+ * (sem Redis real, ver docs/production-readiness.md), mas o contrato já
+ * é o de uma operação que PODE levar alguns segundos: o chamador deve
+ * mostrar um estado de carregamento enquanto aguarda esta promise. */
+export async function generatePrototype(prototypeId: string): Promise<GenerationRun> {
+  const response = await apiPost<GenerationRunResponse>(`/api/prototypes/${prototypeId}/generate`);
+  return toGenerationRun(response);
+}
+
+export async function getGeneration(prototypeId: string, generationId: string): Promise<GenerationRun> {
+  const response = await apiGet<GenerationRunResponse>(
+    `/api/prototypes/${prototypeId}/generations/${generationId}`
+  );
+  return toGenerationRun(response);
 }

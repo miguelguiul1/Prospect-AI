@@ -1,13 +1,16 @@
 # Prospect AI
 
-> **Pós-Fase 8 (+ Prompt 10).** Este README descreve o estado real do
-> projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
+> **Pós-Fase 9 (+ Prompts 10 e 11).** Este README descreve o estado real
+> do projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
 > Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder,
-> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach, e
-> o hardening de produção da Fase 8 (CI/CD, worker RQ real, observabilidade,
-> segurança) estão implementados; geração de código por IA para o
-> Prototype Builder ainda não (é a próxima fase — ver "Próxima fase"
-> abaixo). Ver `docs/crm.md` e `docs/production-readiness.md`.
+> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach, o
+> hardening de produção da Fase 8 (CI/CD, worker RQ real, observabilidade,
+> segurança), e agora a geração de protótipo por IA (Fase 9 — Context
+> Builder + Generation Engine, uma única chamada, catálogo fechado de
+> componentes) estão implementados; refinamento por linguagem natural e
+> versionamento ainda não (é a próxima fase — ver "Próxima fase" abaixo).
+> Ver `docs/crm.md`, `docs/production-readiness.md` e
+> `docs/prototype-generation.md`.
 
 ## O que é
 
@@ -24,13 +27,14 @@ autorizadas.
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
 os agentes futuros e o roadmap de fases. Este repositório implementa, até
-aqui, as **Fases 0 a 8** desse roadmap, mais o Prompt 10 (fechamento de
-gaps estruturais e de produção antes da Fase 9 — Prototype↔Company,
-CSP, ADRs, auditoria de cobertura).
+aqui, as **Fases 0 a 9** desse roadmap, mais o Prompt 10 (fechamento de
+gaps estruturais e de produção antes da Fase 9 — Prototype↔Company, CSP,
+ADRs, auditoria de cobertura).
 
 - `docs/architecture.md` — estado real da arquitetura após a Fase 6 (ver
-  `docs/crm.md` para F7 e `docs/production-readiness.md` para F8/Prompt 10 —
-  não retroagido neste documento).
+  `docs/crm.md` para F7, `docs/production-readiness.md` para F8/Prompt 10,
+  e `docs/prototype-generation.md` para a Fase 9 — não retroagidos neste
+  documento).
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe.
@@ -56,6 +60,9 @@ CSP, ADRs, auditoria de cobertura).
 - `docs/production-readiness.md` — Fase 8: CI/CD, worker RQ real,
   hardening de segurança/rate limiting, staging Docker, observabilidade,
   concorrência/carga real, backup/recovery, auditoria de dependências.
+- `docs/prototype-generation.md` — Fase 9: Context Builder (classificação
+  FACT/SIGNAL/UNKNOWN/INFERENCE), Generation Engine, validação do
+  artefato gerado, `GenerationRun`/`ContextSnapshot`, API, cost control.
 - `docs/adr/` — Architecture Decision Records a partir do Prompt 10
   (decisões anteriores continuam citadas em texto corrido em `docs/crm.md`).
 - `docs/development.md` — como rodar, testar e migrar backend e frontend.
@@ -203,6 +210,8 @@ GET  /api/prototypes            → lista protótipos das empresas acessíveis* 
 GET  /api/prototypes/{id}       → detalhe completo (árvore de componentes) — Fase 6
 PUT  /api/prototypes/{id}       → atualiza nome/descrição/árvore/settings — Fase 6
 DELETE /api/prototypes/{id}     → exclui um protótipo — Fase 6
+POST /api/prototypes/{id}/generate → dispara a geração da árvore de componentes por IA — Fase 9
+GET  /api/prototypes/{id}/generations/{generation_id} → consulta o estado de uma geração — Fase 9
 ```
 
 <sup>*Autenticação obrigatória e `company_id` adicionados no Prompt 10 —
@@ -449,17 +458,20 @@ real e opcional da Fase 1, ignorado por padrão. **Frontend: 131 testes**
 segurança do renderer, canvas, painel de propriedades, paleta, diálogo de
 criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
 
-## Fase 7 e Fase 8 (+ Prompt 10)
+## Fase 7, Fase 8 e Fase 9 (+ Prompts 10 e 11)
 
 Não narradas fase a fase aqui como as anteriores (para não duplicar
 conteúdo) — a documentação de referência é `docs/crm.md` (Fase 7:
 Autenticação JWT, ownership de `Opportunity`, CRM/Pipeline/Contacts/
-Activities, Assisted Outreach Level 1 com IA) e
-`docs/production-readiness.md` (Fase 8: CI/CD, worker RQ real,
-observabilidade, hardening de segurança, staging Docker, concorrência/
-carga real, backup/recovery). O Prompt 10 fechou o vínculo
-`Prototype`↔`Company` que faltava antes da Fase 9 — ver
-`docs/prototype-builder.md` e `docs/adr/`.
+Activities, Assisted Outreach Level 1 com IA), `docs/production-readiness.md`
+(Fase 8: CI/CD, worker RQ real, observabilidade, hardening de segurança,
+staging Docker, concorrência/carga real, backup/recovery), e
+`docs/prototype-generation.md` (Fase 9: Context Builder com classificação
+FACT/SIGNAL/UNKNOWN/INFERENCE, Generation Engine de uma única chamada,
+validação de segurança do artefato gerado, `GenerationRun`/
+`ContextSnapshot`). O Prompt 10 fechou o vínculo `Prototype`↔`Company`
+que faltava antes da Fase 9 — ver `docs/prototype-builder.md` e
+`docs/adr/`.
 
 ## O que NÃO está implementado ainda
 
@@ -486,10 +498,15 @@ carga real, backup/recovery). O Prompt 10 fechou o vínculo
   e `docs/prototype-builder.md`). Autenticação/autorização em si **já
   existem** desde a Fase 7 (JWT próprio) e cobrem o Prototype Builder desde
   o Prompt 10.
-- No Prototype Builder: drag-and-drop, geração de código por IA (Fase 9),
+- No Prototype Builder: drag-and-drop, refinamento por linguagem natural,
+  versionamento (`PrototypeVersion`, ver `docs/adr/012-no-prototype-version-yet.md`),
   publicação/deploy, domínio personalizado, marketplace de componentes,
   sistema de plugins, histórico ilimitado (ver `docs/prototype-builder.md`,
-  "O que NÃO foi implementado").
+  "O que NÃO foi implementado"). **Geração automática de uma árvore de
+  componentes por IA já está implementada desde a Fase 9** — ver
+  `docs/prototype-generation.md`; geração de HTML/CSS/JS executável
+  continua fora de escopo em qualquer fase (nunca planejada — o Builder
+  gera uma árvore de componentes do catálogo fechado, nunca código).
 - Billing. (CRM e Assisted Outreach **já estão implementados** desde a
   Fase 7 — ver `docs/crm.md`.)
 
@@ -556,9 +573,10 @@ e `docs/prototype-builder.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Fase 9 — AI Prototype Generation**, conforme o roadmap da arquitetura
-v0.2 (conteúdo não detalhado aqui — ver o prompt de implementação quando
-autorizado). O Prompt 10 fechou os pré-requisitos estruturais (vínculo
-`Prototype`↔`Company`, riscos de segurança abertos da Fase 8, auditoria de
-cobertura de testes, ADRs, esta atualização de documentação). Não inicia
+**Refinamento por linguagem natural + Versionamento**, conforme o roadmap
+da arquitetura v0.2 (conteúdo não detalhado aqui — ver o prompt de
+implementação quando autorizado; decisão de adiar `PrototypeVersion` até
+esta fase documentada em `docs/adr/012-no-prototype-version-yet.md`). A
+Fase 9 (Context Builder + Generation Engine, Prompt 11) já está
+implementada — ver `docs/prototype-generation.md`. Não inicia
 automaticamente: aguarda aprovação explícita.

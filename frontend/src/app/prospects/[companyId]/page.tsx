@@ -17,6 +17,7 @@ import { OpportunitySection } from "@/components/prospect-detail/opportunity-sec
 import { BreakdownSection } from "@/components/prospect-detail/breakdown-section";
 import { EvidenceSection } from "@/components/prospect-detail/evidence-section";
 import { SalesBriefSection } from "@/components/prospect-detail/sales-brief-section";
+import { PrototypeSection } from "@/components/prospect-detail/prototype-section";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,7 @@ export default async function ProspectDetailPage({
       <BreakdownSection breakdown={company.latest_score?.breakdown ?? null} />
       <EvidenceSection evidence={company.evidence} />
       <SalesBriefSection companyId={company.id} brief={company.latest_brief} hasScore={Boolean(company.latest_score)} />
+      <PrototypeSection companyId={company.id} hasOpportunity={Boolean(openOpportunity)} />
     </div>
   );
 }
