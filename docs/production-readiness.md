@@ -412,3 +412,100 @@ injetada via `monkeypatch` cirúrgico, documentado em cada teste.
 
 Regressão completa após F8.7: **518 passed, 15 skipped, 0 failed** (514
 pré-existentes + 4 novos de `tests/test_failure_injection.py`).
+
+## Backup, Recovery e Migrations (F8.8)
+
+### Auditoria consolidada da cadeia de migrations
+
+10 migrations (`0001` a `0010`), todas com `upgrade()` E `downgrade()`
+implementados desde que foram escritas (F0-F7) — mas, até esta fase,
+**nenhum `downgrade()` jamais havia sido executado de verdade**, em
+nenhuma migration, em nenhuma sessão deste projeto. A cadeia de rollback
+era uma suposição de código nunca exercitada.
+
+`tests/test_migrations_roundtrip.py` (novo, 2 testes) corrige isso,
+rodando `alembic` como subprocesso real (não em processo, para não
+interferir com o banco compartilhado da suíte principal — ver docstring
+do arquivo) contra um arquivo SQLite dedicado:
+
+- **Round-trip completo**: `upgrade head` → `downgrade base` (as 10
+  migrations revertidas em cadeia, pela primeira vez) → `upgrade head`
+  novamente. Confirma que, após o downgrade total, só a tabela interna
+  `alembic_version` resta (nenhuma tabela de domínio esquecida por um
+  `downgrade()` incompleto), e que o schema final do segundo `upgrade` é
+  byte-a-byte o mesmo conjunto de tabelas do primeiro.
+- **Rollback parcial de um passo** (`downgrade -1`, o caso real de
+  operação — reverter só a última migration aplicada, nunca o banco
+  inteiro): confirma que `0010_crm_outreach` reverte isoladamente,
+  removendo `outreach_messages` sem afetar `opportunities`/`activities`/
+  `contacts` das migrations anteriores.
+
+**Validação: VALIDADO REALMENTE, mas contra SQLite, não PostgreSQL** — a
+lógica de cada `downgrade()` (que tabelas/colunas/índices remover, em que
+ordem) é a mesma independentemente do dialeto, mas o comportamento do
+dialeto SQLite para DDL (`Will assume non-transactional DDL`, visível no
+log do Alembic) difere de PostgreSQL (que tem DDL transacional real); um
+`downgrade()` que falhasse a meio caminho se comportaria diferente nos
+dois. Rodar esta mesma suíte contra PostgreSQL real (via
+`REAL_POSTGRES_URL`, mesmo padrão de `tests/infra/`) é a extensão natural
+quando essa infraestrutura existir — não implementada agora para não medir
+uma coisa e reportar como se fosse outra.
+
+### Backup + Restore: prova de conceito real
+
+`tests/test_backup_restore.py` (novo): cria um registro real, copia os
+bytes do arquivo do banco ("backup"), apaga o arquivo original
+("desastre"), e restaura a partir da cópia — confirma que o dado
+recuperado é idêntico ao original. **Rótulo importante**: isto é como
+backup/restore funciona de verdade em SQLite (o arquivo inteiro É o
+banco); não generaliza para PostgreSQL, cujo mecanismo real seria
+`pg_dump`/`pg_restore` ou WAL archiving + PITR — nenhum dos dois foi
+executado nesta sessão (**NÃO VALIDADO** para Postgres, sem instância real
+disponível). O valor real deste teste é provar que o CONCEITO
+"backup íntegro + restore == dado recuperado" funciona de ponta a ponta
+contra o SGBD que esta sessão realmente tem, não simular o procedimento de
+produção.
+
+### Política de backup para PostgreSQL em produção (convenção documentada, nunca executada)
+
+Como nenhum PostgreSQL de produção/staging existe ainda, o que segue é uma
+convenção proporcional ao tamanho deste projeto — não uma configuração já
+aplicada em algum provedor, e não um SLA comercial inventado:
+
+| Aspecto | Convenção recomendada | Por quê |
+|---|---|---|
+| Frequência | 1 backup lógico completo (`pg_dump`) por dia + WAL archiving contínuo, se o provedor oferecer (a maioria dos gerenciados oferece por padrão) | Um projeto deste porte não gira volume de dados que justifique mais que backup diário completo; WAL contínuo é o que reduz a janela de perda sem custo operacional adicional relevante |
+| Retenção | 7 diários + 4 semanais + 3 mensais (esquema avô-pai-filho) | Convenção padrão da indústria para este porte de projeto, sem exigir armazenamento desproporcional |
+| Criptografia | Em repouso, via criptografia nativa do provedor de armazenamento (a maioria oferece por padrão); nunca um backup em texto claro em um bucket público | Dado de negócio (empresas prospectadas, e-mails de contato, rascunhos de outreach) — não é dado anônimo |
+| Armazenamento | Fora da instância do banco, idealmente em outra zona/região | Um backup no mesmo disco/instância do banco não sobrevive à mesma falha que o backup deveria proteger contra |
+| Isolamento de acesso | Credencial de escrita de backup nunca é a mesma credencial da aplicação; a aplicação nunca tem permissão de exclusão sobre o armazenamento de backup | Um comprometimento da aplicação (ex.: RCE, credencial vazada) não deveria conseguir apagar os próprios backups |
+
+**Nada disto foi provisionado ou testado contra um provedor real nesta
+sessão** — é a convenção que qualquer provisionamento futuro de
+PostgreSQL real deveria seguir, análoga à tabela de separação Local/
+Staging/Production já documentada na F8.4.
+
+### RPO / RTO (estimativas técnicas, não SLA comercial)
+
+- **RPO (Recovery Point Objective) ≈ 24 horas** com a política acima
+  (backup diário completo, sem WAL archiving garantido em todo provedor).
+  Se WAL archiving contínuo estiver disponível, o RPO real cai para
+  minutos — mas isso depende do provedor escolhido no dia do
+  provisionamento real, não pode ser prometido genericamente aqui.
+- **RTO (Recovery Time Objective)**: **NÃO VALIDADO com dado em escala de
+  produção** — nunca houve um PostgreSQL real para medir o tempo de um
+  `pg_restore` de verdade. O que existe como referência real e medida
+  nesta sessão é o tempo de um ciclo de migração completo contra SQLite
+  (schema vazio, sem volume de dados): os dois testes de
+  `test_migrations_roundtrip.py` — três invocações de `alembic` cada, via
+  subprocesso — completam em **≈ 2 a 6 segundos** nesta máquina. Isto NÃO
+  é uma estimativa de RTO de produção (é só o tempo de recriar o SCHEMA,
+  sem nenhum dado); um RTO real dependeria do volume de dados real no
+  momento do incidente e só pode ser medido com um `pg_restore` real
+  contra um dump de tamanho comparável ao de produção — não simulável
+  honestamente sem essa infraestrutura.
+
+### Regressão
+
+**521 passed, 15 skipped, 0 failed** (518 pré-existentes + 2 novos de
+`test_migrations_roundtrip.py` + 1 novo de `test_backup_restore.py`).
