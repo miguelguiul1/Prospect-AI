@@ -328,3 +328,87 @@ Regressão completa após F8.6: **514 passed, 15 skipped, 0 failed**
 (507 pré-existentes + 7 novos de `tests/test_metrics.py`; a mudança
 intencional em `test_health.py` está incluída nesses 514, não é uma
 falha).
+
+## Concorrência, Carga e Falhas (F8.7)
+
+### Teste de carga local real (`backend/scripts/load_test.py`)
+
+Script novo, executado manualmente (não faz parte do `pytest`): sobe um
+`uvicorn` **real** em processo separado, escutando em uma porta TCP real,
+apontado para um arquivo SQLite dedicado e recém-migrado (`alembic upgrade
+head` de verdade), e dispara requisições HTTP reais via `httpx` com
+`ThreadPoolExecutor` (threads reais do SO, não corrotinas simulando
+concorrência). **Rótulo honesto**: mede a camada HTTP/aplicação sob
+concorrência real, mas contra SQLite, não PostgreSQL — os números de
+throughput/latência não são os de produção (SQLite serializa escritas por
+processo; PostgreSQL usa MVCC com locks por linha). Rodado nesta sessão,
+resultados reais capturados:
+
+| Cenário | Requisições | Concorrência | Resultado real |
+|---|---|---|---|
+| `GET /health` (liveness, sem banco) | 300 | 30 threads | 532 req/s, latência média 53.9ms, p95 100.7ms, p99 107.2ms, 0 erros |
+| `GET /api/crm/opportunities` (leitura autenticada, com banco) | 150 | 15 threads | 186 req/s, latência média 78.5ms, p95 110.3ms, p99 121.0ms, 0 erros |
+| `POST /api/crm/opportunities` concorrente, mesma empresa (prova de corretude) | 15 | 15 threads | 15×201, **0 erros**; verificado por consulta direta ao banco: exatamente **1** Opportunity `OPEN` sobreviveu — o índice único parcial segura a corrida também contra SQLite real, via HTTP real, não só em teoria |
+| `POST /api/auth/login` concorrente, credenciais erradas (rate limit sob carga real) | 20 | 20 threads | 10×401 (dentro do limite) + 10×429 (acima do limite de 10/300s) — prova que o contador `local_fallback` (protegido por `threading.Lock`) é de fato thread-safe sob concorrência real de SO, não só correto em um teste sequencial de unidade |
+
+**Achado**: nenhum erro 5xx ou de transporte em nenhum cenário — a camada
+HTTP/middleware/ORM não quebra sob esta carga (proporcional a um ambiente
+de desenvolvimento local, não "milhões de usuários", conforme escopo desta
+fase). O cenário 3 é a prova empírica mais forte já produzida no projeto de
+que a idempotência de `create_or_get` funciona sob concorrência real —
+antes desta fase, a única prova de concorrência existente
+(`tests/infra/test_real_postgres.py`, F8.1) nunca havia sido executada
+(exigia PostgreSQL real). Este script, ao contrário, roda de verdade nesta
+máquina.
+
+**Limitação documentada, não corrigida**: sob uma carga de escrita muito
+mais alta que os 15 requests concorrentes testados aqui, SQLite pode
+retornar `database is locked` (lock de escrita único por arquivo) — um
+comportamento que PostgreSQL não tem (MVCC). Não é um bug a corrigir no
+código de aplicação (que já roda sobre `postgresql+psycopg` em
+produção/CI); é uma característica conhecida de usar SQLite como stand-in
+de desenvolvimento, já documentada desde a Fase 0.
+
+### Testes de injeção de falha (`backend/tests/test_failure_injection.py`, novo, 4 testes)
+
+Cobrem exatamente o que a cobertura já existente (extensiva desde F7 para
+"Redis indisponível", e em `tests/briefing/test_providers.py`/
+`tests/outreach/test_service.py` para "Anthropic indisponível") ainda não
+cobria:
+
+- **Falha de banco no meio de uma rota de negócio comum** (`GET
+  /api/companies`, `GET /api/crm/kpis`) — não só em `/health/dependencies`
+  (único lugar já coberto antes): confirma que `unhandled_exception_handler`
+  devolve um 500 limpo (`{"error": {"code": "internal_error", ...}}`), sem
+  vazar o tipo ou a mensagem real da exceção, também para rotas de negócio
+  comuns, não só para o health check desenhado especificamente para isso.
+- **Worker down**: um job enfileirado (via `fakeredis`) sem nenhum
+  `Worker(...).work()` consumindo a fila permanece `queued` indefinidamente
+  — nunca perdido, nunca marcado como falho, nunca executado por engano em
+  outro lugar. Complementa (não duplica)
+  `tests/jobs/test_worker_integration.py`, que sempre inicia um worker para
+  provar o caminho de sucesso/falha de execução.
+- Um teste-âncora de documentação (`TestRedisDownConsistencySummary`) que
+  importa os quatro módulos onde a cobertura de "Redis indisponível" já
+  vive, para que uma remoção futura acidental de qualquer um deles quebre
+  visivelmente este arquivo em vez de silenciosamente perder cobertura.
+
+**Metodologia não destrutiva**: nenhum teste derruba um processo real (não
+há PostgreSQL/Redis real para derrubar nesta máquina); cada falha é
+injetada via `monkeypatch` cirúrgico, documentado em cada teste.
+
+### O que permanece NÃO VALIDADO nesta fase
+
+- Failover real de Redis (matar/reiniciar um processo Redis real durante
+  uma requisição em andamento) — exigiria um Redis real e controle do seu
+  ciclo de vida, indisponíveis nesta máquina.
+- Restart do backend sob carga (impacto real em conexões em andamento) —
+  o script de load test para o servidor de forma limpa ao final, nunca o
+  interrompe abruptamente no meio de uma rajada.
+- Qualquer teste de carga contra PostgreSQL/Redis reais — os números desta
+  seção são todos contra SQLite; `tests/infra/` (F8.1) contém os testes de
+  concorrência prontos para PostgreSQL real, mas continuam nunca
+  executados nesta sessão (exigem infraestrutura ausente).
+
+Regressão completa após F8.7: **518 passed, 15 skipped, 0 failed** (514
+pré-existentes + 4 novos de `tests/test_failure_injection.py`).
