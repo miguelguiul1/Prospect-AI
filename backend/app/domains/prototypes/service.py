@@ -1,16 +1,22 @@
-"""Orquestração do Prototype Builder: criar, listar, ler, atualizar e
-excluir um `Prototype`. Nenhuma geração de código, nenhuma IA, nenhuma
-execução de conteúdo do usuário — só CRUD validado.
+"""Orquestração do Prototype Builder: criar, listar, atualizar e excluir
+um `Prototype`. Nenhuma geração de código, nenhuma IA, nenhuma execução de
+conteúdo do usuário — só CRUD validado.
 
-Sobre "ownership" (seção 9/10 do Prompt 09): o Prospect AI não tem
-autenticação em nenhuma fase até aqui (auditoria confirmou isso no início
-da Fase 6 — zero JWT/OAuth/sessão em todo o backend). Não é possível
-implementar isolamento por usuário sem inventar um sistema de autenticação
-inteiro, que está fora do escopo desta fase (e de todas as anteriores).
-Por isso `owner_id` existe na coluna mas nunca é lido de um campo enviado
-pelo cliente nem usado para filtrar/autorizar nada nesta fase — documentado
-como limitação conhecida, não como uma omissão silenciosa (ver
-docs/prototype-builder.md).
+Sobre ownership (Prompt 10): `create` exige `company_id` e verifica que o
+usuário chamador tem uma `Opportunity` para essa empresa antes de permitir
+a criação — o mesmo critério usado depois para ler/editar/excluir (ver
+`app.domains.prototypes.authorization.get_accessible_prototype_or_404`).
+Sem essa checagem na criação, um usuário poderia criar um `Prototype`
+vinculado a uma empresa que nunca prospectou e nunca mais conseguir
+acessá-lo (já que a leitura exige a mesma posse) — inconsistente, não uma
+falha de segurança em si, mas confuso o suficiente para justificar a
+mesma regra nos dois lugares.
+
+`get`/`update`/`delete` recebem o objeto `Prototype` já carregado e
+autorizado pela rota (mesmo padrão de `OpportunityService.change_stage`
+em `app.domains.crm.service`) — não recebem mais um `prototype_id` cru,
+para nunca existir um caminho de escrita que pule a checagem de
+autorização por engano.
 """
 from __future__ import annotations
 
@@ -19,6 +25,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from app.domains.companies.models import Company
+from app.domains.crm.authorization import user_owns_any_opportunity_for_company
 from app.domains.prototypes.models import Prototype
 from app.domains.prototypes.schemas import validate_component_tree
 
@@ -35,43 +43,53 @@ class PrototypeService:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def create(self, *, name: str, description: str | None = None) -> Prototype:
-        prototype = Prototype(name=name, description=description, components=[], settings={})
+    def create(
+        self, *, name: str, description: str | None, company_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Prototype:
+        """Levanta `LookupError` se a empresa não existe, ou `PermissionError`
+        se o usuário não tem nenhuma Opportunity para ela — ambos os casos
+        viram 404 na rota (nunca 403), mesmo padrão do resto do CRM."""
+        company = self._db.get(Company, company_id)
+        if company is None:
+            raise LookupError(f"Company {company_id} não encontrada")
+        if not user_owns_any_opportunity_for_company(self._db, company_id=company_id, user_id=user_id):
+            raise PermissionError(f"Usuário não tem acesso à empresa {company_id}")
+
+        prototype = Prototype(
+            name=name, description=description, company_id=company_id, components=[], settings={}
+        )
         self._db.add(prototype)
         self._db.flush()
         return prototype
 
-    def list(self, *, limit: int = 50, offset: int = 0) -> PrototypePage:
-        total = self._db.query(Prototype).count()
-        items = (
-            self._db.query(Prototype)
-            .order_by(Prototype.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .all()
-        )
-        return PrototypePage(items=items, total=total, limit=limit, offset=offset)
+    def list_for_user(self, *, user_id: uuid.UUID, limit: int = 50, offset: int = 0) -> PrototypePage:
+        """Só protótipos de empresas para as quais o usuário tem alguma
+        Opportunity — nunca a lista inteira de todos os usuários."""
+        from sqlalchemy import select
 
-    def get(self, prototype_id: uuid.UUID) -> Prototype | None:
-        return self._db.get(Prototype, prototype_id)
+        from app.domains.crm.models import Opportunity
+
+        accessible_company_ids = (
+            select(Opportunity.company_id).where(Opportunity.owner_id == user_id).scalar_subquery()
+        )
+        query = self._db.query(Prototype).filter(Prototype.company_id.in_(accessible_company_ids))
+
+        total = query.count()
+        items = query.order_by(Prototype.updated_at.desc()).limit(limit).offset(offset).all()
+        return PrototypePage(items=items, total=total, limit=limit, offset=offset)
 
     def update(
         self,
-        prototype_id: uuid.UUID,
+        prototype: Prototype,
         *,
         name: str | None = None,
         description: str | None = None,
         components: list[dict] | None = None,
         settings: dict | None = None,
     ) -> Prototype:
-        """Levanta `LookupError` se o protótipo não existe, ou `ValueError`
-        se `components` não passar na validação estrutural (ver
-        `schemas.validate_component_tree`) — nunca persiste uma árvore
-        parcialmente válida."""
-        prototype = self._db.get(Prototype, prototype_id)
-        if prototype is None:
-            raise LookupError(f"Prototype {prototype_id} não encontrado")
-
+        """Levanta `ValueError` se `components` não passar na validação
+        estrutural (ver `schemas.validate_component_tree`) — nunca persiste
+        uma árvore parcialmente válida."""
         if name is not None:
             prototype.name = name
         if description is not None:
@@ -85,13 +103,9 @@ class PrototypeService:
         self._db.flush()
         return prototype
 
-    def delete(self, prototype_id: uuid.UUID) -> bool:
-        prototype = self._db.get(Prototype, prototype_id)
-        if prototype is None:
-            return False
+    def delete(self, prototype: Prototype) -> None:
         self._db.delete(prototype)
         self._db.flush()
-        return True
 
 
 __all__ = ["PrototypeService", "PrototypePage"]

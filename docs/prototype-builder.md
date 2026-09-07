@@ -13,32 +13,54 @@ catálogo pequeno de 12 componentes, sem drag-and-drop, sem geração de
 código, sem publicação. Ver seção "O que NÃO foi implementado" e
 `docs/architecture.md`.
 
-## Achado crítico da auditoria: não existe autenticação
+## Autenticação e vínculo com Company (Prompt 10)
 
-Antes de qualquer código, uma auditoria confirmou (busca direta por
-JWT/OAuth/login/sessão em todo o backend): **o Prospect AI não tem
-autenticação em nenhuma fase**, de F0 a F5. O Prompt 09 presumia
-"autenticação e estrutura principal" já prontas e pedia isolamento de
-protótipos por usuário (`userId`, ownership) — isso não é possível sem
-inventar um sistema de autenticação inteiro, fora do escopo desta fase (e
-de todas as anteriores, pelo mesmo motivo já documentado em
-`docs/architecture.md`: a fusão de `Company` também não é exposta por HTTP
-"porque o sistema ainda não tem autenticação").
+Na Fase 6, o Prospect AI ainda não tinha autenticação (confirmado por
+auditoria — nenhum JWT/OAuth/sessão em todo o backend até F5), e
+`Prototype` não tinha nenhuma referência a `Company`: `owner_id` existia
+como uma coluna `String` nunca preenchida, um placeholder para quando
+autenticação existisse. A Fase 7 trouxe autenticação real (JWT) e CRM; o
+Prompt 10 (antes da geração por IA da Fase 9, que precisa saber de qual
+empresa puxar contexto) fechou essa lacuna: `owner_id` foi **removido**
+(nunca tinha sido usado para nada) e substituído por `company_id`, uma FK
+real para `companies.id`.
 
-Decisão tomada, seguindo esse mesmo precedente: `Prototype.owner_id` existe
-como coluna (`String`, nullable, indexada) mas **nunca é lido de um valor
-enviado pelo cliente nem usado para autorizar nada** nesta fase — reservado
-para quando uma fase futura de autenticação existir, no mesmo espírito de
-`SearchRun.requested_by` (Fase 1). Todos os protótipos são visíveis e
-editáveis por qualquer chamador da API, sem exceção. Isto é uma limitação
-conhecida e documentada, não uma omissão silenciosa.
+**Ownership**: `Prototype` não tem `owner_id` próprio — o acesso é
+derivado exatamente como `Contact` já funciona no CRM
+(`app.domains.crm.authorization.user_owns_any_opportunity_for_company`):
+"este usuário tem uma `Opportunity` para a `Company` deste `Prototype`".
+Criar um protótipo exige que o usuário já tenha uma `Opportunity` para a
+empresa (`PrototypeService.create` verifica isso antes de persistir,
+levantando `LookupError`/`PermissionError`, ambos convertidos em 404 —
+nunca 403 — na rota, mesmo padrão de não vazar existência de IDs já usado
+em todo o resto do CRM). Ver `app/domains/prototypes/authorization.py`.
+
+**Dado legado**: protótipos criados antes desta migration não têm como
+receber um `company_id` real derivado de `owner_id` (que nunca guardou
+nada útil) — a coluna aceita `NULL` para não inventar uma empresa falsa
+para eles (ver docstring de `models.py` e a migration `0011`). Um
+protótipo com `company_id=None` fica permanentemente inacessível pela API
+(nenhum usuário pode provar posse de "nenhuma empresa"). Aceitável porque
+nenhum ambiente de produção real jamais rodou este projeto.
+
+**Consequência conhecida no frontend**: `POST /api/prototypes` agora
+exige `company_id` no payload, mas `NewPrototypeDialog`
+(`frontend/src/components/prototype-builder/new-prototype-dialog.tsx`) e
+a página `/prototypes` continuam sem nenhum seletor de empresa — criado
+como um fluxo standalone na Fase 6, antes de existir qualquer vínculo com
+Company. **O botão "Novo protótipo" desta página deixa de funcionar até
+uma fase futura adicionar um ponto de entrada com contexto de empresa**
+(ex.: a partir da página de uma `Opportunity`/`Company`) — decisão
+deliberada de não redesenhar essa UX nesta fase (fora do escopo do Prompt
+10, que é estritamente backend), já que a Fase 9 (geração por IA) precisa
+resolver exatamente esse fluxo de qualquer forma.
 
 ## Modelo de dados
 
 ```
 Prototype
   id            uuid, pk
-  owner_id      string, nullable — reservado para autenticação futura (ver acima)
+  company_id    uuid, FK -> companies.id, nullable só para dado legado (ver acima)
   name          string(200)
   description   string(2000), nullable
   components    JSON — árvore de componentes, ver abaixo
@@ -185,16 +207,17 @@ esta fase não precisa resolver, já que não há colaboração em tempo real).
 ## API
 
 ```
-GET    /api/prototypes/meta/component-types  → catálogo de tipos aceitos
-POST   /api/prototypes                        → cria (nome + descrição)
-GET    /api/prototypes                        → lista paginada
+GET    /api/prototypes/meta/component-types  → catálogo de tipos aceitos (público)
+POST   /api/prototypes                        → cria (nome + descrição + company_id)
+GET    /api/prototypes                        → lista paginada (só empresas acessíveis)
 GET    /api/prototypes/{id}                   → detalhe completo
 PUT    /api/prototypes/{id}                   → atualiza (nome/descrição/árvore/settings)
 DELETE /api/prototypes/{id}                   → exclui
 ```
 
-Sem autenticação (ver seção acima) — todos os endpoints estão abertos,
-mesma limitação já documentada em todas as fases anteriores.
+Todas as rotas exigem autenticação (`Authorization: Bearer`, Fase 7),
+exceto o catálogo de tipos (Prompt 10) — que não expõe dado de nenhum
+usuário, mesmo espírito de `GET /api/crm/pipeline/stages`.
 
 ## O que NÃO foi implementado (seção 19 do Prompt 09)
 

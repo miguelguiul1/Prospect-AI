@@ -83,10 +83,19 @@ def test_full_downgrade_to_base_then_upgrade_head_round_trips_cleanly() -> None:
             db_path.unlink()
 
 
-def test_downgrading_one_step_from_head_removes_only_the_last_migration_tables() -> None:
+def test_downgrading_one_step_from_head_reverts_only_the_last_migration() -> None:
     """Rollback parcial (o caso real de operação: reverter só a última
-    migration aplicada, não o banco inteiro) — prova que `0010_crm_outreach`
-    reverte de forma isolada, sem afetar as tabelas de `0009` e anteriores."""
+    migration aplicada, não o banco inteiro) — prova que a migration mais
+    recente (`0011_prototype_company_link`, Prompt 10) reverte
+    isoladamente, sem afetar tabelas de migrations anteriores.
+
+    Deliberadamente não hardcoda qual é "a última migration" por nome além
+    de checar seu efeito específico (`prototypes.company_id`) — quando uma
+    migration nova for adicionada no futuro, este teste deve ser atualizado
+    para refletir o novo efeito esperado de "um passo atrás do head", assim
+    como aconteceu aqui (a versão anterior deste teste checava
+    `0010_crm_outreach`, que deixou de ser o head quando `0011` foi
+    adicionada)."""
     db_path = Path(tempfile.gettempdir()) / f"prospect_ai_migration_partial_{uuid.uuid4().hex}.db"
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
@@ -95,10 +104,13 @@ def test_downgrading_one_step_from_head_removes_only_the_last_migration_tables()
         _run_alembic("downgrade", "-1", db_path=db_path)
         engine.dispose()
 
-        tables = set(inspect(engine).get_table_names())
-        assert "outreach_messages" not in tables
+        columns = {c["name"] for c in inspect(engine).get_columns("prototypes")}
+        assert "company_id" not in columns
+        assert "owner_id" in columns
         # Tabelas de migrations anteriores continuam intactas.
+        tables = set(inspect(engine).get_table_names())
         assert "opportunities" in tables
+        assert "outreach_messages" in tables
         assert "activities" in tables
         assert "contacts" in tables
     finally:

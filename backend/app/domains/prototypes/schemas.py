@@ -16,6 +16,7 @@ Duas regras de segurança concretas vivem aqui (seção "Segurança" da Fase 6):
 """
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -118,8 +119,15 @@ def validate_component_tree(components: list[dict]) -> list[PrototypeComponentIn
 
 
 class PrototypeCreateRequest(BaseModel):
+    """`company_id` obrigatório desde o Prompt 10: sem ele é impossível
+    responder "para qual empresa este protótipo foi feito" — bloqueador
+    direto para a geração por IA da Fase 9, que precisa de contexto de
+    empresa. Ver `app/domains/prototypes/models.py` para a decisão sobre
+    protótipos criados antes desta obrigatoriedade existir."""
+
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    company_id: uuid.UUID
 
 
 class PrototypeUpdateRequest(BaseModel):

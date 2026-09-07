@@ -6,6 +6,7 @@ interface PrototypeSummaryResponse {
   id: string;
   name: string;
   description: string | null;
+  company_id: string | null;
   component_count: number;
   created_at: string;
   updated_at: string;
@@ -22,6 +23,7 @@ interface PrototypeDetailResponse {
   id: string;
   name: string;
   description: string | null;
+  company_id: string | null;
   components: BackendComponentNode[];
   settings: Record<string, unknown>;
   created_at: string;
@@ -115,8 +117,26 @@ export async function getPrototype(id: string): Promise<PrototypeDetail> {
   };
 }
 
-export async function createPrototype(input: { name: string; description?: string }): Promise<PrototypeDetail> {
-  const response = await apiPost<PrototypeDetailResponse>("/api/prototypes", input);
+/**
+ * `company_id` é obrigatório no backend desde o Prompt 10 (Fase 9 precisa
+ * saber de qual empresa puxar contexto) — `NewPrototypeDialog`
+ * (`components/prototype-builder/new-prototype-dialog.tsx`) ainda não
+ * coleta um `company_id` (fluxo standalone herdado da Fase 6, sem nenhum
+ * seletor de empresa). Até uma fase futura adicionar um ponto de entrada
+ * com contexto de empresa, chamar esta função sem `companyId` retorna 422
+ * do backend — ver docs/prototype-builder.md, seção "Consequência
+ * conhecida no frontend".
+ */
+export async function createPrototype(input: {
+  name: string;
+  description?: string;
+  companyId: string;
+}): Promise<PrototypeDetail> {
+  const response = await apiPost<PrototypeDetailResponse>("/api/prototypes", {
+    name: input.name,
+    description: input.description,
+    company_id: input.companyId,
+  });
   return {
     id: response.id,
     name: response.name,
