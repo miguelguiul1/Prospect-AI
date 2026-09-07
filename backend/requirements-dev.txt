@@ -13,3 +13,7 @@ fakeredis==2.31.3
 # atualizado mesmo assim (para 2.13.0, sem nenhuma vulnerabilidade
 # conhecida) para eliminar o ruído e reduzir a superfície de risco futura.
 pip-audit==2.10.1
+# Relatório de cobertura de testes (Prompt 10, seção 3 — auditoria de
+# cobertura, pedida explicitamente: `pytest --cov`). Nunca usado para
+# perseguir 100% — só para identificar pontos cegos reais.
+pytest-cov==7.1.0

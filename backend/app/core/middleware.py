@@ -75,15 +75,46 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             clear_request_context()
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Headers de segurança básicos em toda resposta (Fase 8.3).
+_DOCS_PATH_PREFIXES = ("/docs", "/redoc")
 
-    Esta é uma API JSON, não uma aplicação que renderiza HTML — por isso
-    não inclui uma Content-Security-Policy própria (CSP protege contra
-    injeção de script em página renderizada; o lugar correto para isso é o
-    frontend Next.js, não aqui). `Strict-Transport-Security` é seguro
-    enviar sempre, mesmo sobre HTTP em desenvolvimento — o navegador só o
-    respeita quando a conexão já é HTTPS.
+# CSP para /docs e /redoc (Swagger UI / ReDoc, ligados por padrão pelo
+# FastAPI — nunca desligados explicitamente neste projeto): confirmado ao
+# inspecionar a página de verdade (Prompt 10, seção 2.1) que ela carrega
+# CSS/JS de `cdn.jsdelivr.net`, um favicon de `fastapi.tiangolo.com`, e
+# executa um <script> inline para inicializar o SwaggerUIBundle — sem
+# `'unsafe-inline'` em `script-src`, a própria página de documentação do
+# FastAPI não carregaria. Aceitável como exceção pontual e documentada,
+# escopada só a estas duas rotas: `/docs`/`/redoc` são HTML gerado pelo
+# próprio FastAPI (nunca por dado de usuário), não uma superfície de XSS.
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' https://fastapi.tiangolo.com data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'"
+)
+
+# CSP para toda outra rota (a API de verdade): restritiva ao máximo — uma
+# resposta JSON nunca precisa carregar nenhum sub-recurso (script, estilo,
+# imagem, fonte). `default-src 'none'` é mais restritivo que o
+# `default-src 'self'` costumeiro porque este backend não serve nenhuma
+# página própria para justificar `'self'` — só entra em jogo no caso
+# residual de um navegador acabar renderizando uma resposta como HTML
+# (ex.: uma página de erro de proxy), nunca no uso normal via fetch/XHR de
+# um cliente JSON (CSP não afeta chamadas fetch/XHR, só documentos
+# renderizados e os sub-recursos que eles tentam carregar).
+_API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Headers de segurança básicos em toda resposta (Fase 8.3; CSP
+    adicionada no Prompt 10, seção 2.1 — achado aberto da auditoria F8.0/
+    Fase 8 "Remaining Risks").
+
+    `Strict-Transport-Security` é seguro enviar sempre, mesmo sobre HTTP em
+    desenvolvimento — o navegador só o respeita quando a conexão já é
+    HTTPS.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -92,6 +123,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        is_docs_page = request.url.path.startswith(_DOCS_PATH_PREFIXES)
+        response.headers["Content-Security-Policy"] = _DOCS_CSP if is_docs_page else _API_CSP
         return response
 
 

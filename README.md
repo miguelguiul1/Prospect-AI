@@ -1,11 +1,13 @@
 # Prospect AI
 
-> **Fase 7 — CRM + Outreach.** Este README descreve o estado real do
+> **Pós-Fase 8 (+ Prompt 10).** Este README descreve o estado real do
 > projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
-> Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder e agora
-> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach
-> estão implementados; geração de código/publicação/envio automatizado de
-> outreach ainda não. Ver `docs/crm.md`.
+> Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder,
+> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach, e
+> o hardening de produção da Fase 8 (CI/CD, worker RQ real, observabilidade,
+> segurança) estão implementados; geração de código por IA para o
+> Prototype Builder ainda não (é a próxima fase — ver "Próxima fase"
+> abaixo). Ver `docs/crm.md` e `docs/production-readiness.md`.
 
 ## O que é
 
@@ -21,10 +23,14 @@ autorizadas.
 
 A decisão de arquitetura completa (v0.2, revisada e aprovada antes desta
 implementação) descreve o pipeline completo, o modelo de dados conceitual,
-os agentes futuros e o roadmap de 8 fases. Este repositório implementa,
-até aqui, as **Fases 0, 1, 2, 3, 4, 5 e 6** desse roadmap.
+os agentes futuros e o roadmap de fases. Este repositório implementa, até
+aqui, as **Fases 0 a 8** desse roadmap, mais o Prompt 10 (fechamento de
+gaps estruturais e de produção antes da Fase 9 — Prototype↔Company,
+CSP, ADRs, auditoria de cobertura).
 
-- `docs/architecture.md` — estado real da arquitetura após a Fase 6.
+- `docs/architecture.md` — estado real da arquitetura após a Fase 6 (ver
+  `docs/crm.md` para F7 e `docs/production-readiness.md` para F8/Prompt 10 —
+  não retroagido neste documento).
 - `docs/data-model.md` — schema de banco implementado, com as decisões e
   desvios documentados.
 - `docs/discovery.md` — o domínio de Discovery em detalhe.
@@ -41,11 +47,17 @@ até aqui, as **Fases 0, 1, 2, 3, 4, 5 e 6** desse roadmap.
   consumidas/criadas, decisões de UX, segurança, testes, limitações.
 - `docs/prototype-builder.md` — o Prototype Builder: modelo de dados,
   catálogo de componentes, segurança, arquitetura do editor, limitações
-  (histórico: nas Fases 0-6 o projeto não tinha autenticação — resolvido na
-  Fase 7, ver abaixo).
+  (histórico: nas Fases 0-6 o projeto não tinha autenticação, resolvida na
+  Fase 7; o vínculo `Prototype`↔`Company` e a autorização derivada de
+  `Opportunity` foram adicionados no Prompt 10, antes da Fase 9).
 - `docs/crm.md` — Autenticação (JWT próprio), ownership/autorização, CRM
   (Opportunity/Pipeline/Contacts/Activities), Assisted Outreach + IA,
   segurança, variáveis de ambiente novas, limitações.
+- `docs/production-readiness.md` — Fase 8: CI/CD, worker RQ real,
+  hardening de segurança/rate limiting, staging Docker, observabilidade,
+  concorrência/carga real, backup/recovery, auditoria de dependências.
+- `docs/adr/` — Architecture Decision Records a partir do Prompt 10
+  (decisões anteriores continuam citadas em texto corrido em `docs/crm.md`).
 - `docs/development.md` — como rodar, testar e migrar backend e frontend.
 
 ## Stack
@@ -186,12 +198,16 @@ GET  /api/companies/{id}        → agregação completa para a tela de detalhe 
 GET  /api/companies/meta/stats  → KPIs do Dashboard, calculados em SQL — Fase 5
 GET  /api/companies/meta/filters → categorias/regiões em uso, para os filtros do Dashboard — Fase 5
 GET  /api/prototypes/meta/component-types → catálogo de tipos de componente aceitos — Fase 6
-POST /api/prototypes            → cria um protótipo (nome + descrição) — Fase 6
-GET  /api/prototypes            → lista protótipos (paginado) — Fase 6
+POST /api/prototypes            → cria um protótipo (nome + descrição + company_id*) — Fase 6
+GET  /api/prototypes            → lista protótipos das empresas acessíveis* (paginado) — Fase 6
 GET  /api/prototypes/{id}       → detalhe completo (árvore de componentes) — Fase 6
 PUT  /api/prototypes/{id}       → atualiza nome/descrição/árvore/settings — Fase 6
 DELETE /api/prototypes/{id}     → exclui um protótipo — Fase 6
 ```
+
+<sup>*Autenticação obrigatória e `company_id` adicionados no Prompt 10 —
+nas Fases 0-6 estas rotas eram abertas e sem vínculo com `Company` (ver
+`docs/prototype-builder.md`).</sup>
 
 Exemplo — Discovery:
 
@@ -394,6 +410,10 @@ React Testing Library).
   `Prototype.owner_id` existe como coluna reservada mas não é usado para
   isolar nada nesta fase, mesmo precedente já aceito para a fusão de
   `Company` desde a Fase 2. Ver `docs/prototype-builder.md`.
+  **Atualizado na Fase 7 (autenticação real) e no Prompt 10** (`owner_id`
+  removido, substituído por `company_id` + autorização derivada de
+  `Opportunity` — ver `docs/prototype-builder.md`, seção "Autenticação e
+  vínculo com Company").
 - **Catálogo de 12 componentes iniciais** (Container, Section, Row,
   Column, Text, Heading, Button, Image, Input, Textarea, Card, Divider) —
   pequeno de propósito; adicionar um tipo novo não exige mudar a estrutura
@@ -429,10 +449,23 @@ real e opcional da Fase 1, ignorado por padrão. **Frontend: 131 testes**
 segurança do renderer, canvas, painel de propriedades, paleta, diálogo de
 criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
 
+## Fase 7 e Fase 8 (+ Prompt 10)
+
+Não narradas fase a fase aqui como as anteriores (para não duplicar
+conteúdo) — a documentação de referência é `docs/crm.md` (Fase 7:
+Autenticação JWT, ownership de `Opportunity`, CRM/Pipeline/Contacts/
+Activities, Assisted Outreach Level 1 com IA) e
+`docs/production-readiness.md` (Fase 8: CI/CD, worker RQ real,
+observabilidade, hardening de segurança, staging Docker, concorrência/
+carga real, backup/recovery). O Prompt 10 fechou o vínculo
+`Prototype`↔`Company` que faltava antes da Fase 9 — ver
+`docs/prototype-builder.md` e `docs/adr/`.
+
 ## O que NÃO está implementado ainda
 
 - Fusão de duas `Company` exposta por HTTP (existe e é testada só na
-  camada de serviço — falta autenticação/autorização no sistema).
+  camada de serviço — autenticação já existe desde a Fase 7, mas nenhuma
+  rota HTTP para esta operação foi adicionada em nenhuma fase até aqui).
 - Consumo da fila de revisão humana do Identity Resolution — existe e é
   populada; falta uma interface dedicada.
 - Qualquer agente de IA multi-etapa ou framework de agentes (CrewAI,
@@ -448,14 +481,17 @@ criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
   — a validação por resolução prévia existe; fixar a conexão TCP ao IP
   validado, não (ver `docs/digital-audit.md`).
 - Crawling: o Digital Audit analisa só a página inicial do candidato.
-- Autenticação/autorização, multi-tenant, atualização em tempo real no
-  Dashboard nem no Prototype Builder (sem WebSocket/polling, sem
-  colaboração — ver `docs/dashboard.md` e `docs/prototype-builder.md`).
-- No Prototype Builder: drag-and-drop, geração de código, publicação/
-  deploy, domínio personalizado, marketplace de componentes, sistema de
-  plugins, histórico ilimitado (ver `docs/prototype-builder.md`, "O que
-  NÃO foi implementado").
-- CRM, outreach, billing.
+- Multi-tenant e atualização em tempo real no Dashboard nem no Prototype
+  Builder (sem WebSocket/polling, sem colaboração — ver `docs/dashboard.md`
+  e `docs/prototype-builder.md`). Autenticação/autorização em si **já
+  existem** desde a Fase 7 (JWT próprio) e cobrem o Prototype Builder desde
+  o Prompt 10.
+- No Prototype Builder: drag-and-drop, geração de código por IA (Fase 9),
+  publicação/deploy, domínio personalizado, marketplace de componentes,
+  sistema de plugins, histórico ilimitado (ver `docs/prototype-builder.md`,
+  "O que NÃO foi implementado").
+- Billing. (CRM e Assisted Outreach **já estão implementados** desde a
+  Fase 7 — ver `docs/crm.md`.)
 
 ## Limitações conhecidas
 
@@ -469,9 +505,11 @@ teve consequências práticas:
 2. `docker compose up` **não foi executado** nesta implementação.
 3. `POST /api/discovery/search` e `POST /api/audit/{company_id}` sempre
    rodam em modo síncrono de fallback nesta máquina (sem Redis para
-   enfileirar de verdade) — o caminho enfileirado (RQ) está implementado e
-   testado quanto ao *fallback*, mas nunca foi exercitado ponta a ponta
-   com um worker real.
+   enfileirar de verdade). Um worker RQ real existe desde a Fase 8.2
+   (`app/worker.py` — antes disso, nenhum processo consumia a fila em
+   nenhuma fase, achado da auditoria F8.0) e foi validado com Redis
+   simulado (`fakeredis`); contra Redis real, continua nunca exercitado
+   nesta máquina (ver `docs/production-readiness.md`).
 4. Nenhuma chamada real à Google Places API foi feita — não há chave de
    API disponível neste ambiente. O Digital Audit, por outro lado, **foi**
    validado com uma chamada de rede real contra `https://example.com`
@@ -496,15 +534,17 @@ teve consequências práticas:
    App Router quando a rota tem um `loading.tsx` — a UI correta ainda
    assim é exibida (ver `docs/dashboard.md`, seção "Limitações
    conhecidas").
-8. **O Prototype Builder (Fase 6) não tem autenticação** — mesma limitação
-   estrutural do restante do sistema (achado de auditoria: zero
-   JWT/OAuth/login em todo o backend). `Prototype.owner_id` existe mas
-   não isola nada. Validado com o mesmo servidor de produção Next.js +
-   backend real: criação, edição da árvore, validação de segurança
-   (tipo fora do catálogo e propriedade aninhada corretamente rejeitados,
-   sem corromper o protótipo já salvo), exclusão, e ausência de segredos
-   no bundle — mesmo "soft 404" do item 7 acima também se aplica aqui.
-   Ver `docs/prototype-builder.md`.
+8. **O Prototype Builder (Fase 6) foi validado com o mesmo servidor de
+   produção Next.js + backend real**: criação, edição da árvore, validação
+   de segurança (tipo fora do catálogo e propriedade aninhada corretamente
+   rejeitados, sem corromper o protótipo já salvo), exclusão, e ausência de
+   segredos no bundle — mesmo "soft 404" do item 7 acima também se aplica
+   aqui. **Atualizado**: a falta de autenticação/ownership descrita
+   originalmente aqui foi resolvida — autenticação real existe desde a
+   Fase 7, e `Prototype` ganhou `company_id` + autorização derivada de
+   `Opportunity` no Prompt 10 (antes disso, `owner_id` existia como coluna
+   nunca usada). O fluxo de criação do frontend ainda não tem um seletor de
+   empresa (consequência conhecida, ver `docs/prototype-builder.md`).
 
 Nenhuma decisão de arquitetura foi alterada por causa dessas limitações —
 são lacunas de validação de ambiente, documentadas para serem fechadas
@@ -516,5 +556,9 @@ e `docs/prototype-builder.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Fase 7**, conforme o roadmap da arquitetura v0.2. Não inicia
+**Fase 9 — AI Prototype Generation**, conforme o roadmap da arquitetura
+v0.2 (conteúdo não detalhado aqui — ver o prompt de implementação quando
+autorizado). O Prompt 10 fechou os pré-requisitos estruturais (vínculo
+`Prototype`↔`Company`, riscos de segurança abertos da Fase 8, auditoria de
+cobertura de testes, ADRs, esta atualização de documentação). Não inicia
 automaticamente: aguarda aprovação explícita.

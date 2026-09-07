@@ -61,6 +61,39 @@ class TestSecurityHeaders:
     def test_headers_are_present_even_on_an_error_response(self, client) -> None:
         response = client.get("/api/companies/00000000-0000-0000-0000-000000000000")
         assert response.status_code == 404
+
+
+class TestContentSecurityPolicy:
+    """Prompt 10, seção 2.1 — achado aberto da Fase 8 (Remaining Risks:
+    "sem CSP no backend")."""
+
+    def test_api_responses_get_the_restrictive_default_none_policy(self, client) -> None:
+        response = client.get("/health")
+        csp = response.headers["Content-Security-Policy"]
+        assert "default-src 'none'" in csp
+        assert "unsafe-inline" not in csp
+        assert "unsafe-eval" not in csp
+
+    def test_api_error_responses_also_get_the_restrictive_policy(self, client) -> None:
+        response = client.get("/api/companies/00000000-0000-0000-0000-000000000000")
+        assert "default-src 'none'" in response.headers["Content-Security-Policy"]
+
+    def test_docs_page_gets_a_looser_policy_scoped_to_jsdelivr(self, client) -> None:
+        """Sem esta exceção documentada, o próprio Swagger UI do FastAPI
+        (ligado por padrão, nunca desligado neste projeto) não carregaria —
+        ele injeta um <script> inline e depende de `cdn.jsdelivr.net`
+        (confirmado inspecionando a resposta real de `/docs`)."""
+        response = client.get("/docs")
+        assert response.status_code == 200
+        csp = response.headers["Content-Security-Policy"]
+        assert "default-src 'none'" not in csp
+        assert "cdn.jsdelivr.net" in csp
+        assert "'unsafe-inline'" in csp
+
+    def test_redoc_page_also_gets_the_looser_policy(self, client) -> None:
+        response = client.get("/redoc")
+        assert response.status_code == 200
+        assert "cdn.jsdelivr.net" in response.headers["Content-Security-Policy"]
         assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 

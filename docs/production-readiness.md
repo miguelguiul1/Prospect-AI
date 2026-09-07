@@ -116,7 +116,7 @@ parâmetro `on_unavailable`:
 
 | Operação | Política | Por quê |
 |---|---|---|
-| Login | `local_fallback` | Negar login por completo por uma dependência opcional fora do ar seria pior que o risco mitigado — usa um contador local em memória do processo como segunda linha de defesa, **nunca equivalente a um limite distribuído real** (não coordena entre réplicas, é perdido a cada restart). |
+| Login | `local_fallback` | Negar login por completo por uma dependência opcional fora do ar seria pior que o risco mitigado — usa um contador local em memória do processo como segunda linha de defesa, **nunca equivalente a um limite distribuído real** (não coordena entre réplicas, é perdido a cada restart). **Risco aceito formalizado em `docs/adr/011-rate-limiter-distribuido.md` (Prompt 10)**: só passa a importar de verdade no dia em que uma segunda réplica do backend existir — nenhuma existe hoje. |
 | Registro de conta | `local_fallback` | Mesma razão do login; novo (não existia limite nenhum antes da Fase 8.3). |
 | Geração de Outreach | `fail_closed` | Custo financeiro direto (chamada à Anthropic) — bloquear é mais seguro que permitir sem limite. |
 | Geração de Sales Brief | `fail_closed` | Mesma razão — **era a única operação de IA do projeto inteiro sem nenhum rate limit** antes desta fase (achado R11 da auditoria F8.0). Por não ter autenticação (rota pré-F7), o limite é por `company_id`, não por usuário. |
@@ -605,3 +605,115 @@ como enviar.
 
 **522 passed, 15 skipped, 0 failed** (521 pré-existentes + 1 novo teste
 de validação de tamanho de segredo).
+
+## Prompt 10 — Prototype↔Company, Riscos Abertos da Fase 8, Cobertura
+
+Fase intermediária entre a Fase 8 (produção) e a Fase 9 (geração de
+protótipo por IA) — fecha um gap estrutural real e revalida os riscos que
+o próprio relatório final da Fase 8 já tinha identificado como abertos.
+
+### Prototype↔Company (achado da auditoria, seção 1)
+
+`Prototype` não tinha nenhuma referência a `Company` — impossível saber
+para qual empresa um protótipo foi feito, bloqueador direto para a Fase 9
+(que precisa desse contexto). `company_id` (FK real, `NULL`-ável só para
+dado legado — nunca inventado) substitui `owner_id` (`String`, nunca
+preenchido em nenhuma fase, removido). Ownership derivado de `Opportunity`
+(`user_owns_any_opportunity_for_company`, o mesmo padrão de `Contact` no
+CRM), nunca um `owner_id` próprio. Sempre 404, nunca 403, para "não existe"
+e "existe mas não é acessível" — mesmo padrão de todo o resto do CRM.
+Migration `0011_prototype_company_link` usa `batch_alter_table` (primeira
+vez no projeto que uma FK é adicionada a uma tabela já existente — SQLite
+não suporta `ALTER TABLE ... ADD CONSTRAINT` direto), testada de verdade
+em `upgrade`/`downgrade`. Decisão completa em
+`docs/adr/008-prototype-company-ownership.md`.
+
+**Consequência conhecida, não resolvida nesta fase**: o fluxo de criação
+do frontend (`NewPrototypeDialog`) não tem seletor de empresa — herdado de
+um fluxo standalone da Fase 6. Criar um protótipo pelo formulário atual
+retorna um erro claro explicando a limitação, em vez de falhar
+silenciosamente ou quebrar o build; ver `docs/prototype-builder.md`.
+
+### Riscos abertos da Fase 8, revalidados (seção 2)
+
+| Risco | Ação | Onde |
+|---|---|---|
+| Sem CSP no backend | **Implementado**: `default-src 'none'` em toda rota da API; exceção documentada e escopada só para `/docs`/`/redoc` (Swagger UI do FastAPI, confirmado por inspeção real que precisa de `cdn.jsdelivr.net` + `unsafe-inline`) | `SecurityHeadersMiddleware`, ADR-009 |
+| `JWT_SECRET_KEY` sem key-versioning | **Decisão de não implementar agora** — nenhuma política de rotação existe, nenhuma produção real, over-engineering sem o requisito que o justificasse | ADR-010 |
+| Sem alerta automático de saúde | **Implementado**: `scripts/healthcheck_alert.py` (novo) consulta `/health/dependencies`, sai com código != 0 quando degradado/not_ready — nunca integra com um serviço de alerta externo, isso fica para quem agenda o script | `scripts/healthcheck_alert.py`, testado contra um servidor real (mesma metodologia de F8.7) |
+| Rate limiter local não distribuído | **Decisão de não implementar um rate limiter distribuído agora** (nenhuma réplica existe) — formalizada com comentário no código + 2 testes estruturais que quebram se a limitação for silenciosamente removida no futuro | `app/core/rate_limit.py`, `tests/test_rate_limit.py`, ADR-011 |
+
+### Auditoria de cobertura (seção 3)
+
+`pytest-cov` (novo, dev-only) rodado por completo pela primeira vez neste
+projeto: **94% de cobertura de linha no backend** (4616 statements, 273
+não cobertos). Os piores pontos identificados e o que foi feito:
+
+- **`app/domains/discovery/cache.py` (66% → corrigido)**: TODO o caminho
+  de sucesso do cache (cache hit, deserialização, escrita) nunca tinha
+  sido exercitado por nenhum teste — Redis está sempre indisponível nesta
+  suíte, então só o caminho "Redis ausente" tinha cobertura. Corrigido com
+  `tests/discovery/test_cache.py` (8 testes, via `fakeredis`).
+- **`app/api/routes/outreach.py` (71% → corrigido)**: sem
+  `ANTHROPIC_API_KEY` em nenhum teste, o caminho de SUCESSO de
+  `generate_outreach`, e as rotas `edit`/`transition` inteiras (impossível
+  até criar um Outreach para testá-las), nunca tinham sido exercitados.
+  Corrigido com 11 testes novos em `tests/outreach/test_api.py`, injetando
+  um provider de IA fake no ponto de resolução de `OutreachService` (mesmo
+  padrão já usado em `tests/outreach/test_service.py`).
+- **`enqueue_or_run_*` em `app/domains/{discovery,audit,briefing}/jobs.py`
+  (59% cada → parcialmente corrigido)**: o caminho "Redis disponível →
+  retorna 'queued'" nunca tinha sido exercitado (toda rota HTTP sempre cai
+  no fallback síncrono). Corrigido com `tests/jobs/test_enqueue_or_run.py`
+  (3 testes, `fakeredis`). O que **continua** sem cobertura de unidade,
+  deliberadamente: o corpo de `run_discovery_search`/`run_digital_audit`/
+  `run_sales_brief` (a função que abre sua PRÓPRIA `SessionLocal`, para
+  rodar em um processo de worker separado) — testá-la diretamente exigiria
+  ou vazar um commit real no SQLite compartilhado da suíte, ou um
+  monkeypatch complexo o suficiente para mascarar bugs reais. A lógica que
+  ela chama já é testada extensivamente pelo outro branch (`db is not
+  None`, usado por toda rota HTTP); o mecanismo genérico de execução via
+  RQ já é provado por `tests/jobs/test_worker_integration.py` (F8.2).
+- **`app/worker.py` (56%, documentado, não testado)**: `main()` chama
+  `Worker(...).work()`, que bloqueia para sempre — não testável
+  diretamente sem um subprocesso com timeout, de baixo valor real: o
+  mesmo `Worker`/`.work()` já é exercitado (com `burst=True`, que não
+  bloqueia) em `tests/jobs/test_worker_integration.py`.
+
+**Frontend**: `@vitest/coverage-v8` (novo, dev-only) rodado por completo
+pela primeira vez — 86.7% statements / 76.7% branches sobre os arquivos
+exercitados pelos testes. Pior ponto real encontrado: `toolbar.tsx` (50%
+statements) — nunca tinha um teste dedicado, só cobertura indireta via
+`prototype-builder.test.tsx`, que nunca exercitava renomear o protótipo
+nem os botões de desfazer/refazer. Corrigido com `toolbar.test.tsx` (6
+testes novos). Outros pontos baixos (`prototype-builder.tsx`,
+`property-panel.tsx`, `node-renderer.tsx`, `prospects-filters.tsx`) são
+majoritariamente ramos condicionais de UI (não caminhos de erro de rede/
+entrada malformada) — documentados aqui, não perseguidos até 100%, por
+retorno decrescente frente ao objetivo desta seção ("identificar pontos
+cegos reais", não cobertura total).
+
+**Nota sobre `@vitest/coverage-v8` e `@types/node`**: instalado com
+`--legacy-peer-deps` — há um conflito de peer dependency entre
+`vitest@5` (exige `@types/node >=22`) e o `@types/node@^20` já fixado no
+projeto. Puramente uma divergência de tipos de uma ferramenta de
+desenvolvimento (não afeta o runtime nem o bundle de produção) — não
+resolvido nesta fase (fora de escopo: exigiria decidir se `@types/node`
+sobe de major version, uma mudança maior que uma ferramenta de cobertura
+justifica sozinha).
+
+### ADRs (seção 4)
+
+`docs/adr/` (novo — antes do Prompt 10, ADRs só existiam como menções em
+texto corrido em `docs/crm.md`, nunca em arquivos próprios): ADR-008
+(Prototype↔Company), ADR-009 (CSP), ADR-010 (JWT key-versioning — decisão
+de não fazer), ADR-011 (rate limiter distribuído — decisão de não fazer).
+Ver `docs/adr/README.md` para o índice completo.
+
+### Regressão final do Prompt 10
+
+**Backend: 564 passed, 15 skipped, 0 failed** (522 pré-existentes + 42
+novos/reescritos entre Prototype↔Company, CSP, rate limit, healthcheck
+script, e a auditoria de cobertura). **Frontend: 169 passed, 0 failed**
+(163 pré-existentes + 6 novos de `toolbar.test.tsx`); typecheck, lint (0
+erros) e build permanecem verdes.

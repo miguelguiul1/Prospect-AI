@@ -1,5 +1,16 @@
 # Arquitetura — estado real após a Fase 6
 
+> **Este documento para deliberadamente na Fase 6** (não foi reescrito
+> fase a fase depois disso, para não duplicar conteúdo). Para a
+> arquitetura de Autenticação/CRM/Outreach (Fase 7), ver `docs/crm.md`;
+> para CI/CD, worker, observabilidade e hardening de produção (Fase 8),
+> ver `docs/production-readiness.md`; para o vínculo `Prototype`↔`Company`
+> e as decisões formalizadas em ADR (Prompt 10, antes da Fase 9), ver
+> `docs/prototype-builder.md` e `docs/adr/`. Esta era exatamente a
+> inconsistência que uma auditoria externa apontou no Prompt 10 — corrigida
+> aqui apontando para a documentação certa, não reescrevendo o histórico
+> abaixo.
+
 Este documento resume a arquitetura tal como **implementada** até a Fase 6.
 Ele não substitui a análise completa de arquitetura (v0.2), que continua
 sendo a referência de decisão para as fases futuras — este arquivo existe
@@ -234,12 +245,18 @@ montar uma árvore de componentes (12 tipos iniciais) num canvas, editar
 propriedades, alternar preview, salvar/recarregar. Determinístico e sem
 IA — nenhuma geração de código, nenhuma execução de conteúdo do usuário.
 Ver `docs/prototype-builder.md` para a arquitetura completa, incluindo o
-achado de auditoria mais importante desta fase: **o Prospect AI não tem
-autenticação em nenhuma fase** (confirmado por busca direta no backend),
-o que significa que `Prototype.owner_id` existe mas não é usado para
-isolar nada ainda — mesma limitação já aceita para a fusão de `Company`
-(seção "O que não existe ainda" acima).
+achado de auditoria mais importante desta fase: **o Prospect AI não tinha
+autenticação em nenhuma fase até aqui** (confirmado por busca direta no
+backend), o que significava que `Prototype.owner_id` existia mas não era
+usado para isolar nada — mesma limitação então aceita para a fusão de
+`Company` (seção "O que não existe ainda" acima). **Resolvido na Fase 7**
+(autenticação JWT real) **e no Prompt 10** (`owner_id` removido,
+substituído por `company_id` + autorização derivada de `Opportunity` — ver
+`docs/prototype-builder.md` e `docs/adr/008-prototype-company-ownership.md`).
 
 ## Próxima fase
 
-**Fase 7.** Não inicia automaticamente — aguarda aprovação explícita.
+**Fase 9 — AI Prototype Generation**, depois de Fase 7 (CRM/Auth/Outreach,
+ver `docs/crm.md`), Fase 8 (produção, ver `docs/production-readiness.md`)
+e do Prompt 10 (fechamento de gaps estruturais, ver `docs/adr/`) já
+implementados. Não inicia automaticamente — aguarda aprovação explícita.

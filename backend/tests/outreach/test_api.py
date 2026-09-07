@@ -2,13 +2,51 @@
 
 Sem `ANTHROPIC_API_KEY` configurada no ambiente de teste (mesma situação já
 coberta por `tests/briefing/test_api.py`), então toda geração real degrada
-graciosamente — nenhuma chamada de rede acontece.
+graciosamente — nenhuma chamada de rede acontece. Isso deixava o caminho de
+SUCESSO de `generate_outreach`, e as rotas `edit`/`transition` inteiras,
+sem nenhum teste (Prompt 10, seção 3 — auditoria de cobertura: não havia
+como sequer criar um Outreach via API para exercitá-las). `TestGenerateOutreachSuccess`
+e as classes abaixo dela usam o mesmo padrão de provider fake já
+estabelecido em `tests/outreach/test_service.py`, injetado via
+monkeypatch de `app.domains.outreach.service.get_provider` (o ponto onde
+`OutreachService` resolve o provider quando nenhum é passado no
+construtor — a rota HTTP nunca injeta um, então este é o único ponto de
+override possível para um teste de API).
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from app.domains.briefing.providers.base import ProviderResponse, SalesBriefProvider
 from app.domains.companies.models import Company
+
+_VALID_CONTENT = {
+    "subject": "Uma proposta rápida para vocês",
+    "message": "Olá, tudo bem? Notamos que o site de vocês pode ser modernizado...",
+    "rationale": "O site não foi confirmado como ativo, então priorizamos essa dor.",
+    "evidence_ids": ["site_state: not_detected"],
+}
+
+
+class _FakeProvider(SalesBriefProvider):
+    name = "fake"
+
+    def is_configured(self) -> bool:
+        return True
+
+    def generate(self, *, system: str, user: str, max_tokens: int | None = None) -> ProviderResponse:
+        return ProviderResponse(
+            content=json.dumps(_VALID_CONTENT), model="fake-model-1", duration_ms=5.0, input_tokens=80, output_tokens=40
+        )
+
+
+@pytest.fixture
+def fake_ai_provider(monkeypatch: pytest.MonkeyPatch):
+    """Injeta um provider fake no ponto de resolução de `OutreachService`
+    — nunca uma chamada real à Anthropic (mesma regra de todo o projeto)."""
+    monkeypatch.setattr("app.domains.outreach.service.get_provider", lambda settings: _FakeProvider())
 
 
 @pytest.fixture(autouse=True)
@@ -111,3 +149,142 @@ class TestRateLimiting:
 
         assert response.status_code == 429
         assert response.json()["error"]["code"] == "outreach_rate_limited"
+
+
+class TestGenerateOutreachSuccess:
+    """Caminho de sucesso — nunca exercitado antes desta fase, já que
+    nenhum ambiente de teste jamais teve uma `ANTHROPIC_API_KEY` real."""
+
+    def test_generate_returns_201_with_the_ai_generated_content(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        opp_id = _opportunity(client, db_session, headers)
+
+        response = client.post(
+            f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["subject"] == _VALID_CONTENT["subject"]
+        assert body["message"] == _VALID_CONTENT["message"]
+        assert body["status"] == "draft"
+        assert body["generated_by_ai"] is True
+
+    def test_generated_outreach_is_persisted_and_listed(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        opp_id = _opportunity(client, db_session, headers)
+
+        client.post(f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers)
+
+        listed = client.get(f"/api/crm/opportunities/{opp_id}/outreach", headers=headers)
+        assert len(listed.json()) == 1
+
+
+class TestEditOutreach:
+    def _create(self, client, db_session, headers) -> dict:
+        opp_id = _opportunity(client, db_session, headers)
+        return client.post(
+            f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers
+        ).json()
+
+    def test_edit_subject_and_message_of_a_draft(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        created = self._create(client, db_session, headers)
+
+        response = client.patch(
+            f"/api/crm/outreach/{created['id']}",
+            json={"subject": "Assunto editado", "message": "Mensagem editada pelo vendedor."},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["subject"] == "Assunto editado"
+        assert body["message"] == "Mensagem editada pelo vendedor."
+
+    def test_editing_unknown_outreach_returns_404(self, client) -> None:
+        import uuid
+
+        headers = _headers(client)
+        response = client.patch(
+            f"/api/crm/outreach/{uuid.uuid4()}", json={"subject": "X"}, headers=headers
+        )
+        assert response.status_code == 404
+
+    def test_editing_another_users_outreach_returns_404(self, client, db_session, fake_ai_provider) -> None:
+        headers_a = _headers(client, "a2@example.com")
+        headers_b = _headers(client, "b2@example.com")
+        created = self._create(client, db_session, headers_a)
+
+        response = client.patch(
+            f"/api/crm/outreach/{created['id']}", json={"subject": "Invasão"}, headers=headers_b
+        )
+        assert response.status_code == 404
+
+    def test_editing_a_sent_outreach_returns_409(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        created = self._create(client, db_session, headers)
+        client.post(f"/api/crm/outreach/{created['id']}/transition", json={"action": "mark_sent"}, headers=headers)
+
+        response = client.patch(
+            f"/api/crm/outreach/{created['id']}", json={"subject": "Tarde demais"}, headers=headers
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "outreach_not_editable"
+
+
+class TestTransitionOutreach:
+    def _create(self, client, db_session, headers) -> dict:
+        opp_id = _opportunity(client, db_session, headers)
+        return client.post(
+            f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers
+        ).json()
+
+    def test_mark_ready_transitions_a_draft(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        created = self._create(client, db_session, headers)
+
+        response = client.post(
+            f"/api/crm/outreach/{created['id']}/transition", json={"action": "mark_ready"}, headers=headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+
+    def test_mark_sent_logs_an_activity_on_the_opportunity(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        opp_id = _opportunity(client, db_session, headers)
+        created = client.post(
+            f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers
+        ).json()
+
+        response = client.post(
+            f"/api/crm/outreach/{created['id']}/transition", json={"action": "mark_sent"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "sent_manually"
+
+        timeline = client.get(f"/api/crm/opportunities/{opp_id}/timeline", headers=headers).json()
+        assert any(item["type"] == "outreach" for item in timeline)
+
+    def test_invalid_transition_returns_409(self, client, db_session, fake_ai_provider) -> None:
+        headers = _headers(client)
+        created = self._create(client, db_session, headers)
+        client.post(f"/api/crm/outreach/{created['id']}/transition", json={"action": "cancel"}, headers=headers)
+
+        response = client.post(
+            f"/api/crm/outreach/{created['id']}/transition", json={"action": "mark_sent"}, headers=headers
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "invalid_outreach_transition"
+
+    def test_transitioning_unknown_outreach_returns_404(self, client) -> None:
+        import uuid
+
+        headers = _headers(client)
+        response = client.post(
+            f"/api/crm/outreach/{uuid.uuid4()}/transition", json={"action": "cancel"}, headers=headers
+        )
+        assert response.status_code == 404

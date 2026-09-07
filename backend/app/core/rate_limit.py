@@ -43,6 +43,19 @@ OnUnavailablePolicy = Literal["fail_open", "fail_closed", "local_fallback"]
 # confundido com o rate limiter distribuído real. Documentado explicitamente
 # em docs/production-readiness.md como uma degradação aceitável, não uma
 # solução equivalente.
+#
+# ⚠️ RISCO ACEITO PARA INSTÂNCIA ÚNICA (Prompt 10, seção 2.4 — revalidação
+# do "Remaining Risks" da Fase 8): com MAIS DE UMA réplica do backend rodando
+# atrás de um load balancer, cada réplica tem seu próprio dict — um
+# atacante distribuído entre réplicas efetivamente multiplica o limite
+# real por N réplicas (N vezes mais tentativas de força bruta de login
+# passam despercebidas do que o `max_attempts` configurado sugere). Isto
+# só importa no dia em que uma segunda réplica existir; nenhuma existe
+# hoje. `test_local_fallback_state_is_a_plain_process_dict_not_distributed`
+# em `tests/test_rate_limit.py` existe para que este comentário nunca seja
+# esquecido silenciosamente: se alguém trocar esta estrutura por algo
+# distribuído no futuro (ex.: Redis) sem também revisar esta nota, o teste
+# não vai mais fazer sentido e deve chamar atenção na revisão do PR.
 _local_fallback_lock = threading.Lock()
 _local_fallback_attempts: dict[str, list[float]] = defaultdict(list)
 
