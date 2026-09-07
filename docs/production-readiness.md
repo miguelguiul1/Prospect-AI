@@ -169,3 +169,52 @@ resposta 202 de falha graciosa, etc.) agora contornam explicitamente o
 rate limit via `monkeypatch` (documentado no próprio teste, com um
 comentário explicando por quê) — e cada arquivo ganhou um teste dedicado
 que desfaz esse contorno para provar o fail-closed de verdade.
+
+## Docker + Staging Integrado (F8.4)
+
+`docker-compose.yml` agora define 5 serviços: `postgres`, `redis`,
+`backend`, `worker` (Fase 8.2) e `frontend` (novo). `frontend/Dockerfile`
+(novo, multi-stage) usa o build `output: "standalone"` do Next.js
+(`next.config.ts`) — validado localmente (`npm run build` gera
+`.next/standalone/server.js` corretamente); a construção da imagem em si
+permanece **NÃO VALIDADA** (sem Docker nesta máquina, mesma limitação de
+sempre). `backend/Dockerfile` ganhou um `HEALTHCHECK` real (usa `/health`,
+que nunca toca banco/Redis — seguro como liveness).
+
+**Por que nenhum healthcheck de container foi criado para o `worker`**: RQ
+não expõe nenhum endpoint HTTP para checar; inventar um mecanismo próprio
+só para preencher essa lacuna seria mais frágil do que documentar
+honestamente a ausência. A observabilidade real de um worker travado
+(fila crescendo sem consumo) é um problema de métricas (F8.6), não de
+container healthcheck.
+
+### Separação Local / Staging / Production
+
+Nenhum ambiente de staging ou produção real foi provisionado nesta fase
+(exigiria conta em nuvem/hospedagem — fora do que uma sessão de
+desenvolvimento local pode criar de verdade sem inventar credenciais).
+O que existe é a **convenção documentada** que qualquer provisionamento
+futuro deve seguir:
+
+| | Local | Staging | Production |
+|---|---|---|---|
+| Como roda | `docker compose up` (este repo) ou `pytest`/`npm run dev` direto | Deploy real, infraestrutura própria | Deploy real, infraestrutura própria |
+| `DATABASE_URL` | `postgres` do compose, ou SQLite (testes) | Banco PostgreSQL dedicado, nunca compartilhado com produção | Banco PostgreSQL dedicado |
+| `REDIS_URL` | `redis` do compose | Redis dedicado | Redis dedicado |
+| `ANTHROPIC_API_KEY` | Vazio (degrada graciosamente) ou uma chave de teste pessoal | Chave própria de staging, com limite de gasto configurado no provedor | Chave própria de produção |
+| `JWT_SECRET_KEY` | Default inseguro (permitido só aqui) | Valor real, único | Valor real, único, diferente do de staging |
+| `APP_ENV` | `development` | `production`* | `production` |
+| `CORS_ALLOW_ORIGINS` | `localhost:3000` | Domínio real de staging | Domínio real de produção |
+
+<sup>*Staging deveria usar `APP_ENV=production` para exercitar exatamente o
+mesmo comportamento de produção (fail-fast de config, logs JSON) — a
+diferença entre staging e produção está inteiramente em QUAIS recursos
+(banco/Redis/domínio/chave) são apontados, nunca no comportamento do
+código.</sup>
+
+**Nada no código hoje impede, por si só, que alguém aponte staging para o
+banco de produção por engano de configuração** — não existe uma validação
+automática de que as URLs são de fato diferentes entre ambientes (achado
+R14 da auditoria F8.0, não corrigido nesta fase — exigiria decidir uma
+convenção de nomenclatura/tag que só faz sentido quando os dois ambientes
+reais existirem de verdade para testar contra).

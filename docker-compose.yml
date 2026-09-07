@@ -63,7 +63,11 @@ services:
     # parado para sempre, mesmo com Redis disponível (achado da auditoria
     # F8.0, seção 10). Reaproveita a MESMA imagem do backend — é o mesmo
     # código, só um entrypoint diferente (`python -m app.worker`), não um
-    # serviço/deploy separado.
+    # serviço/deploy separado. Sem HEALTHCHECK próprio: RQ não expõe um
+    # endpoint HTTP para checar, e inventar um mecanismo frágil só para ter
+    # "um healthcheck" seria pior que não ter nenhum — a observabilidade
+    # real de um worker travado vem de métricas de fila (F8.6), não de um
+    # healthcheck de container.
     build:
       context: ./backend
     command: ["python", "-m", "app.worker"]
@@ -78,6 +82,23 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+
+  frontend:
+    # Fase 8.4 — antes desta fase o frontend não tinha nenhuma forma
+    # containerizada de rodar; só `npm run dev` local. `API_BASE_URL`
+    # aponta para o nome do serviço `backend` (resolução de DNS interna do
+    # Compose), não `localhost` — dentro da rede do Compose, cada serviço
+    # é acessível pelo nome do serviço.
+    build:
+      context: ./frontend
+    environment:
+      NODE_ENV: production
+      API_BASE_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   prospect_ai_postgres_data:

@@ -16,6 +16,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Fase 8.4: build "standalone" — empacota só o necessário para rodar em
+  // produção (sem precisar de `node_modules` completo no container final).
+  // Usado pelo Dockerfile multi-stage (frontend/Dockerfile).
+  output: "standalone",
   async headers() {
     return [
       {
