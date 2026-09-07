@@ -88,6 +88,10 @@ def generate_outreach(
         f"ratelimit:outreach:{current_user.id}:{datetime.now(timezone.utc).date().isoformat()}",
         max_attempts=settings.outreach_rate_limit_max_per_day,
         window_seconds=24 * 60 * 60,
+        # Fase 8.3: custo financeiro direto (chamada à Anthropic) — se o
+        # Redis (mecanismo de controle) estiver fora do ar, BLOQUEIA em vez
+        # de permitir geração ilimitada (diferente da política de login).
+        on_unavailable="fail_closed",
     )
     if not allowed:
         raise AppError(

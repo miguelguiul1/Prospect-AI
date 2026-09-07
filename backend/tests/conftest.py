@@ -105,3 +105,18 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_local_fallback() -> Generator[None, None, None]:
+    """O fallback local de rate limiting (Fase 8.3, `app.core.rate_limit`)
+    vive em um dict a nível de módulo — sem isso, um teste que registra/
+    loga repetidamente com o mesmo e-mail (comum nesta suíte, já que Redis
+    nunca está disponível em teste e todo `check_and_increment` de login/
+    registro cai no fallback local) acabaria "vazando" tentativas para o
+    próximo teste e sendo bloqueado por um limite que não é dele."""
+    from app.core.rate_limit import reset_local_fallback_state
+
+    reset_local_fallback_state()
+    yield
+    reset_local_fallback_state()

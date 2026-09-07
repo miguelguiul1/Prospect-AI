@@ -1,9 +1,13 @@
-"""API HTTP de autenticação (Fase 7).
+"""API HTTP de autenticação (Fase 7, rate limiting endurecido na Fase 8.3).
 
 `POST /register` e `POST /login` são as únicas rotas públicas deste router
-— tudo o mais no backend passa a depender de `get_current_user`. Login é
-protegido por rate limiting best-effort por e-mail (força bruta) — ver
-`app.core.rate_limit`. `POST /logout` é um endpoint deliberadamente trivial:
+— tudo o mais no backend passa a depender de `get_current_user`. Ambas são
+protegidas por rate limiting por e-mail (força bruta em login, abuso de
+criação de conta em register), política `local_fallback`: se Redis estiver
+fora do ar, um contador local por processo assume como segunda linha de
+defesa — nunca equivalente a um limite distribuído real, mas nunca permite
+tentativas totalmente ilimitadas como o fail-open puro da Fase 7 permitia
+(ver `app.core.rate_limit`). `POST /logout` é um endpoint deliberadamente trivial:
 como o token é um JWT stateless (sem sessão de servidor a invalidar), o
 "logout" real acontece no cliente (descartar o token); o endpoint existe só
 para o frontend ter um alvo explícito e simétrico, e para deixar essa
@@ -37,6 +41,19 @@ def register(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
+    allowed = check_and_increment(
+        f"ratelimit:register:{payload.email}",
+        max_attempts=settings.auth_register_rate_limit_max_attempts,
+        window_seconds=settings.auth_register_rate_limit_window_seconds,
+        on_unavailable="local_fallback",
+    )
+    if not allowed:
+        raise AppError(
+            "Muitas tentativas de cadastro. Tente novamente mais tarde.",
+            code="rate_limited",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     service = AuthService(db)
     try:
         user = service.register(email=payload.email, name=payload.name, password=payload.password)
@@ -59,6 +76,7 @@ def login(
         f"ratelimit:login:{payload.email}",
         max_attempts=settings.auth_login_rate_limit_max_attempts,
         window_seconds=settings.auth_login_rate_limit_window_seconds,
+        on_unavailable="local_fallback",
     )
     if not allowed:
         raise AppError(

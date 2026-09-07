@@ -6,7 +6,19 @@ graciosamente — nenhuma chamada de rede acontece.
 """
 from __future__ import annotations
 
+import pytest
+
 from app.domains.companies.models import Company
+
+
+@pytest.fixture(autouse=True)
+def _bypass_rate_limit(monkeypatch: pytest.MonkeyPatch):
+    """Mesma razão de `tests/briefing/test_api.py`: desde a Fase 8.3, a
+    geração de Outreach usa `on_unavailable="fail_closed"` — sem este
+    bypass, todo teste aqui seria bloqueado com 429 antes de exercitar a
+    lógica que de fato quer testar. `TestRateLimiting` abaixo desfaz o
+    bypass para provar o fail-closed real."""
+    monkeypatch.setattr("app.api.routes.outreach.check_and_increment", lambda *a, **k: True)
 
 
 def _headers(client, email: str = "vendedor@example.com") -> dict:
@@ -81,3 +93,21 @@ class TestOutreachIDORAndTransitions:
 
         response = client.get(f"/api/crm/opportunities/{opp_id}/outreach", headers=headers_b)
         assert response.status_code == 404
+
+
+class TestRateLimiting:
+    """Não usa o fixture `_bypass_rate_limit` (module-level, autouse) —
+    aqui queremos o comportamento real de `check_and_increment` contra o
+    Redis indisponível deste ambiente de teste (Fase 8.3)."""
+
+    def test_generation_is_blocked_when_redis_is_unavailable_fail_closed(self, client, db_session, monkeypatch) -> None:
+        monkeypatch.undo()  # desfaz o autouse fixture só para este teste
+        headers = _headers(client)
+        opp_id = _opportunity(client, db_session, headers)
+
+        response = client.post(
+            f"/api/crm/opportunities/{opp_id}/outreach/generate", json={"channel": "email"}, headers=headers
+        )
+
+        assert response.status_code == 429
+        assert response.json()["error"]["code"] == "outreach_rate_limited"

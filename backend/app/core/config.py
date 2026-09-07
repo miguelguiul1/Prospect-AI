@@ -126,25 +126,40 @@ class Settings(BaseSettings):
     # provedor gerenciado externo), consistente com a postura do projeto de
     # não adicionar dependência de terceiro além do estritamente necessário.
     # O default abaixo é INSEGURO DE PROPÓSITO (só serve para dev/teste sem
-    # `.env`) — `is_production` nunca deve ficar True com este valor; ver
-    # `app.domains.auth.security`, que registra um aviso caso isso ocorra.
+    # `.env`) — a aplicação agora RECUSA subir com este valor quando
+    # `APP_ENV=production` (fail-fast, ver `app.main`, Fase 8.3). Antes desta
+    # fase, era só um log de aviso — não impedia produção de subir insegura.
     jwt_secret_key: str = "dev-insecure-secret-change-me"
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24  # 24h
 
-    # Rate limiting (Fase 7) — reaproveita o Redis já configurado (mesmo
-    # "best-effort, nunca derruba a aplicação" já usado pelo cache do
-    # Discovery). Login: proteção contra força bruta. Outreach: controle de
-    # custo de IA (arquitetura v0.2, seção "cost control").
+    # Rate limiting (Fase 7, políticas diferenciadas na Fase 8.3) —
+    # reaproveita o Redis já configurado. Login: proteção contra força
+    # bruta (fallback local quando Redis está fora do ar — nunca nega login
+    # por completo). Register: mesma proteção, evita enumeração/abuso em
+    # massa de criação de conta. Outreach/Sales Brief: controle de custo de
+    # IA (fail-closed quando Redis está fora do ar — nunca permite chamada
+    # ilimitada à Anthropic).
     auth_login_rate_limit_max_attempts: int = 10
     auth_login_rate_limit_window_seconds: int = 300
+    auth_register_rate_limit_max_attempts: int = 5
+    auth_register_rate_limit_window_seconds: int = 3600
     outreach_rate_limit_max_per_day: int = 20
+    sales_brief_rate_limit_max_per_day: int = 20
 
     # --- Assisted Outreach (Fase 7) ------------------------------------------
     # Reaproveita o mesmo provider/config de IA do Sales Brief
     # (`anthropic_api_key`/`anthropic_model` acima) — só o limite de tokens é
     # menor, porque uma mensagem de outreach é bem mais curta que um briefing.
     outreach_max_tokens: int = 700
+
+    # --- Security hardening (Fase 8.3) ----------------------------------------
+    # Nenhum endpoint aceita um corpo de requisição maior que isto — protege
+    # contra consumo de memória/banda por payload gigante antes mesmo da
+    # validação Pydantic (achado R7 da auditoria F8.0). 1 MB é generoso para
+    # qualquer payload real do sistema (o maior campo de texto único é
+    # limitado a 4000 caracteres).
+    max_request_body_bytes: int = 1_000_000
 
     # --- Reservado para integrações de fases futuras -----------------------
     # Nenhum destes campos é lido por qualquer código das Fases 0-7.

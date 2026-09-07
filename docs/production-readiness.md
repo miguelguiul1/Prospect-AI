@@ -106,3 +106,66 @@ reaproveitando a mesma imagem do backend com um `command` diferente.
   enfileire um job real de ponta a ponta — isso é uma extensão natural e
   pequena para quando o workflow for observado rodando pela primeira vez,
   não implementada agora para não expandir escopo sem necessidade.
+
+## Rate Limiting endurecido + Security Hardening (F8.3)
+
+**Política de Redis indisponível diferenciada por criticidade** (antes: uma
+única política "fail-open" para tudo, achado confirmado ao vivo na
+auditoria F7.5/F8.0). `app.core.rate_limit.check_and_increment` ganhou um
+parâmetro `on_unavailable`:
+
+| Operação | Política | Por quê |
+|---|---|---|
+| Login | `local_fallback` | Negar login por completo por uma dependência opcional fora do ar seria pior que o risco mitigado — usa um contador local em memória do processo como segunda linha de defesa, **nunca equivalente a um limite distribuído real** (não coordena entre réplicas, é perdido a cada restart). |
+| Registro de conta | `local_fallback` | Mesma razão do login; novo (não existia limite nenhum antes da Fase 8.3). |
+| Geração de Outreach | `fail_closed` | Custo financeiro direto (chamada à Anthropic) — bloquear é mais seguro que permitir sem limite. |
+| Geração de Sales Brief | `fail_closed` | Mesma razão — **era a única operação de IA do projeto inteiro sem nenhum rate limit** antes desta fase (achado R11 da auditoria F8.0). Por não ter autenticação (rota pré-F7), o limite é por `company_id`, não por usuário. |
+
+Validado com `fakeredis`? Não para este item específico — a suíte usa
+Redis genuinamente indisponível (porta morta, mesmo padrão desde F7) para
+provar as duas políticas na prática: `tests/test_security_hardening.py`
+implicitamente, e testes dedicados em `tests/briefing/test_api.py`/
+`tests/outreach/test_api.py` (`TestRateLimiting`) provam que, sem Redis,
+Sales Brief e Outreach retornam 429 real (fail-closed), não um 202/201
+mascarando a ausência de controle.
+
+**Fail-fast de configuração em produção** (`app.main._validate_production_config`,
+achado R5): antes desta fase, subir com `JWT_SECRET_KEY` no valor padrão
+inseguro ou com `CORS_ALLOW_ORIGINS=["*"]` em `APP_ENV=production` só
+gerava um log de aviso — nada impedia o processo de subir mesmo assim.
+Agora levanta `RuntimeError` antes de qualquer rota existir.
+
+**Security headers** (`X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Strict-Transport-Security`) em toda resposta — backend
+via `SecurityHeadersMiddleware` (`app.core.middleware`) e frontend via
+`next.config.ts` (`headers()`). Sem CSP própria — decisão deliberada, ver
+comentário em `next.config.ts`: uma CSP mal ajustada quebraria produção
+silenciosamente sem o mesmo nível de teste do resto do projeto.
+
+**Limite de tamanho de requisição** (`RequestSizeLimitMiddleware`, achado
+R7): rejeita com 413 qualquer requisição cujo `Content-Length` declarado
+exceda `MAX_REQUEST_BODY_BYTES` (default 1 MB) — antes de o corpo começar a
+ser lido. Não cobre requisições chunked sem `Content-Length` (nenhum
+endpoint do projeto usa isso hoje); os limites de campo do Pydantic
+continuam sendo a segunda linha de defesa nesse caso residual.
+
+**CSRF**: reavaliado, nenhuma mudança de código feita — a arquitetura já
+protege estruturalmente (o backend FastAPI nunca lê um cookie de sessão
+diretamente; o token só chega como `Authorization: Bearer`, montado pelo
+servidor Next.js a partir do cookie httpOnly — um request forjado
+cross-site não teria como incluir esse header). Nenhum ataque simulado
+explícito de CSRF foi executado nesta fase.
+
+**Cookies de sessão**: revisados, nenhuma mudança de código — já corretos
+por desenho desde a Fase 7 (`httpOnly: true`, `sameSite: "lax"`,
+`secure: NODE_ENV === "production"`). Inspeção do header `Set-Cookie` real
+via um Server Action ao vivo continua **NÃO VALIDADA** (limitação de
+ferramenta desta sessão, não de código).
+
+**Todos os 6 testes que quebraram com a mudança de política de rate
+limiting foram corrigidos, não contornados**: os testes de Sales Brief/
+Outreach que exercitam OUTRO comportamento (empresa não encontrada,
+resposta 202 de falha graciosa, etc.) agora contornam explicitamente o
+rate limit via `monkeypatch` (documentado no próprio teste, com um
+comentário explicando por quê) — e cada arquivo ganhou um teste dedicado
+que desfaz esse contorno para provar o fail-closed de verdade.

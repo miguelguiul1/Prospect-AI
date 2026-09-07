@@ -12,17 +12,26 @@ NUNCA vira um HTTP 500 nem um briefing inventado — o response volta com
 `status="failed"` e o motivo em `error_code`/`error_message`, sempre com
 HTTP 202 (a requisição foi aceita e processada; o resultado é que não foi
 possível gerar o conteúdo).
+
+Rate limiting (Fase 8.3 — achado R11 da auditoria F8.0: esta era a única
+operação de custo de IA do projeto sem nenhum limite). Esta rota é anterior
+à autenticação (Fase 4, antes da Fase 7) e nunca foi retrofitada com auth —
+por isso o limite é por `company_id`, não por usuário, com política
+`fail_closed`: se o Redis (mecanismo de controle) estiver fora do ar,
+BLOQUEIA a geração em vez de permitir chamadas ilimitadas à Anthropic.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.core.rate_limit import check_and_increment
 from app.db.session import get_db
 from app.domains.briefing.jobs import enqueue_or_run_sales_brief
 from app.domains.briefing.models import SalesBrief, SalesBriefStatus
@@ -72,7 +81,24 @@ def _to_response(brief: SalesBrief, *, execution_mode: str | None = None) -> Sal
 
 
 @router.post("/{company_id}", response_model=SalesBriefResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_sales_brief(company_id: uuid.UUID, db: Session = Depends(get_db)) -> SalesBriefResponse:
+def create_sales_brief(
+    company_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> SalesBriefResponse:
+    allowed = check_and_increment(
+        f"ratelimit:sales_brief:{company_id}:{datetime.now(timezone.utc).date().isoformat()}",
+        max_attempts=settings.sales_brief_rate_limit_max_per_day,
+        window_seconds=24 * 60 * 60,
+        on_unavailable="fail_closed",
+    )
+    if not allowed:
+        raise AppError(
+            "Limite diário de gerações de Sales Brief atingido para esta empresa.",
+            code="rate_limited",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     service = SalesBriefService(db)
     try:
         service.validate_preconditions(company_id)
