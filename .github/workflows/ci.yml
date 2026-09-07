@@ -1,0 +1,118 @@
+name: CI
+
+# Pipeline mínima da Fase 8.1 — bloqueia merge quando testes, typecheck,
+# lint, build ou migrations falharem. Nenhuma etapa é decorativa: todo
+# comando aqui já foi executado manualmente com sucesso em sessões
+# anteriores (ver docs/production-readiness.md); esta pipeline apenas
+# automatiza uma disciplina que antes dependia inteiramente de alguém
+# lembrar de rodar os comandos antes de cada push.
+#
+# Os serviços `postgres`/`redis` abaixo são containers REAIS fornecidos
+# pelo runner do GitHub Actions — a primeira vez que este projeto (Fases
+# 0-8) executa contra infraestrutura real, não SQLite/mock. Isto NUNCA foi
+# observado rodar nesta sessão (nenhum push foi feito) — a validação aqui é
+# estrutural (sintaxe YAML + cada comando já confirmado localmente), não
+# uma execução real do workflow.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest + infra real)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: prospect
+          POSTGRES_PASSWORD: prospect
+          POSTGRES_DB: prospect_ai_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prospect"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run test suite (SQLite — mesmo padrão de tests/conftest.py)
+        working-directory: backend
+        run: pytest -q
+
+      - name: Apply migrations against real PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://prospect:prospect@localhost:5432/prospect_ai_ci
+        run: alembic upgrade head
+
+      - name: Run infra tests against real PostgreSQL + Redis
+        working-directory: backend
+        env:
+          REAL_POSTGRES_URL: postgresql+psycopg://prospect:prospect@localhost:5432/prospect_ai_ci
+          REAL_REDIS_URL: redis://localhost:6379/0
+        run: pytest -q tests/infra -v
+
+  frontend:
+    name: Frontend (typecheck + lint + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Test
+        working-directory: frontend
+        run: npm test -- --run
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Audit dependencies (informativo — não bloqueia por padrão)
+        working-directory: frontend
+        run: npm audit --audit-level=critical
