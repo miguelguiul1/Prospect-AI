@@ -86,16 +86,16 @@ def test_full_downgrade_to_base_then_upgrade_head_round_trips_cleanly() -> None:
 def test_downgrading_one_step_from_head_reverts_only_the_last_migration() -> None:
     """Rollback parcial (o caso real de operação: reverter só a última
     migration aplicada, não o banco inteiro) — prova que a migration mais
-    recente (`0011_prototype_company_link`, Prompt 10) reverte
-    isoladamente, sem afetar tabelas de migrations anteriores.
+    recente (`0012_prototype_generation`, Prompt 11) reverte isoladamente,
+    sem afetar tabelas de migrations anteriores.
 
     Deliberadamente não hardcoda qual é "a última migration" por nome além
-    de checar seu efeito específico (`prototypes.company_id`) — quando uma
+    de checar seu efeito específico (as duas tabelas novas) — quando uma
     migration nova for adicionada no futuro, este teste deve ser atualizado
     para refletir o novo efeito esperado de "um passo atrás do head", assim
-    como aconteceu aqui (a versão anterior deste teste checava
-    `0010_crm_outreach`, que deixou de ser o head quando `0011` foi
-    adicionada)."""
+    como já aconteceu duas vezes (a versão original checava
+    `0010_crm_outreach`; a seguinte checava `0011_prototype_company_link`;
+    nenhuma delas é mais o head)."""
     db_path = Path(tempfile.gettempdir()) / f"prospect_ai_migration_partial_{uuid.uuid4().hex}.db"
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
@@ -104,15 +104,17 @@ def test_downgrading_one_step_from_head_reverts_only_the_last_migration() -> Non
         _run_alembic("downgrade", "-1", db_path=db_path)
         engine.dispose()
 
-        columns = {c["name"] for c in inspect(engine).get_columns("prototypes")}
-        assert "company_id" not in columns
-        assert "owner_id" in columns
-        # Tabelas de migrations anteriores continuam intactas.
         tables = set(inspect(engine).get_table_names())
+        assert "prototype_generation_runs" not in tables
+        assert "prototype_context_snapshots" not in tables
+        # Tabelas de migrations anteriores continuam intactas.
+        assert "prototypes" in tables
         assert "opportunities" in tables
         assert "outreach_messages" in tables
         assert "activities" in tables
         assert "contacts" in tables
+        columns = {c["name"] for c in inspect(engine).get_columns("prototypes")}
+        assert "company_id" in columns
     finally:
         engine.dispose()
         if db_path.exists():

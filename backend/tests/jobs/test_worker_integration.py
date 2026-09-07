@@ -91,12 +91,13 @@ class TestWorkerQueueConsistency:
     `app.worker.DEFAULT_QUEUES` — o job passaria a ficar preso para sempre,
     silenciosamente, mesmo com o worker rodando."""
 
-    def test_worker_listens_to_exactly_the_three_real_queues(self) -> None:
-        assert set(DEFAULT_QUEUES) == {"discovery", "audit", "briefing"}
+    def test_worker_listens_to_exactly_the_four_real_queues(self) -> None:
+        assert set(DEFAULT_QUEUES) == {"discovery", "audit", "briefing", "prototype_generation"}
 
     def test_each_domain_queue_name_matches_what_the_worker_expects(self) -> None:
         from app.domains.audit.jobs import QUEUE_NAME as audit_queue
         from app.domains.briefing.jobs import QUEUE_NAME as briefing_queue
         from app.domains.discovery.jobs import QUEUE_NAME as discovery_queue
+        from app.domains.prototypes.jobs import QUEUE_NAME as prototype_queue
 
-        assert {discovery_queue, audit_queue, briefing_queue} == set(DEFAULT_QUEUES)
+        assert {discovery_queue, audit_queue, briefing_queue, prototype_queue} == set(DEFAULT_QUEUES)

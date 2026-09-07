@@ -18,6 +18,7 @@ desta fase, não uma migração das anteriores).
 | [009](./009-backend-content-security-policy.md) | Content-Security-Policy restritiva no backend, com exceção só para `/docs`/`/redoc` | Aceita |
 | [010](./010-jwt-key-versioning.md) | Não implementar rotação de `JWT_SECRET_KEY` com múltiplas chaves (`kid`) agora | Aceita (reconsiderar sob gatilho) |
 | [011](./011-rate-limiter-distribuido.md) | Não implementar rate limiter distribuído agora | Aceita (reconsiderar sob gatilho) |
+| [012](./012-no-prototype-version-yet.md) | Não criar `PrototypeVersion` nesta fase (Prompt 11) | Aceita (reconsiderar sob gatilho) |
 
 ## Formato
 

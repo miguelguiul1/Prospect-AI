@@ -87,3 +87,24 @@ class TestEnqueueOrRunSalesBrief:
         queue = Queue(QUEUE_NAME, connection=fake_redis_connection)
         assert queue.count == 1
         assert queue.jobs[0].func == run_sales_brief
+
+
+class TestEnqueueOrRunPrototypeGeneration:
+    def test_returns_queued_and_enqueues_the_real_job_function_when_redis_is_available(
+        self, fake_redis_connection
+    ) -> None:
+        from app.domains.prototypes.jobs import (
+            QUEUE_NAME,
+            enqueue_or_run_prototype_generation,
+            run_prototype_generation,
+        )
+
+        generation_run_id = uuid.uuid4()
+        result = enqueue_or_run_prototype_generation(generation_run_id, db=None)
+
+        assert result == "queued"
+        from rq import Queue
+
+        queue = Queue(QUEUE_NAME, connection=fake_redis_connection)
+        assert queue.count == 1
+        assert queue.jobs[0].func == run_prototype_generation

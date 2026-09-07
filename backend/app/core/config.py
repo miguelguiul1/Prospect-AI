@@ -146,12 +146,25 @@ class Settings(BaseSettings):
     auth_register_rate_limit_window_seconds: int = 3600
     outreach_rate_limit_max_per_day: int = 20
     sales_brief_rate_limit_max_per_day: int = 20
+    # Menor que Outreach/Sales Brief (achado da Fase 9 / Prompt 11, seção
+    # 6): gerar um protótipo inteiro é uma operação mais pesada e menos
+    # frequente no fluxo real de um vendedor do que gerar uma mensagem ou
+    # um briefing — 10/dia por Prototype é generoso para uso normal e
+    # ainda protege contra um loop de regeneração acidental.
+    prototype_generation_rate_limit_max_per_day: int = 10
 
     # --- Assisted Outreach (Fase 7) ------------------------------------------
     # Reaproveita o mesmo provider/config de IA do Sales Brief
     # (`anthropic_api_key`/`anthropic_model` acima) — só o limite de tokens é
     # menor, porque uma mensagem de outreach é bem mais curta que um briefing.
     outreach_max_tokens: int = 700
+
+    # --- Geração de Prototype por IA (Fase 9 / Prompt 11) --------------------
+    # Reaproveita o mesmo provider/config de IA do Sales Brief/Outreach —
+    # só o limite de tokens é maior: uma árvore de até ~30 componentes, cada
+    # um com vários campos JSON (id/type/parent_id/order/props/styles),
+    # ocupa bem mais tokens de saída que um briefing ou uma mensagem curta.
+    prototype_generation_max_tokens: int = 4000
 
     # --- Security hardening (Fase 8.3) ----------------------------------------
     # Nenhum endpoint aceita um corpo de requisição maior que isto — protege

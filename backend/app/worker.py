@@ -35,12 +35,13 @@ from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import get_redis_connection
 
 # Sincronizado manualmente com `QUEUE_NAME` em cada
-# `app/domains/{discovery,audit,briefing}/jobs.py` — são as três únicas
-# filas reais do projeto (confirmado por busca em toda a auditoria F8.0;
-# Assisted Outreach, Fase 7, é deliberadamente síncrono e não usa fila).
+# `app/domains/{discovery,audit,briefing,prototypes}/jobs.py` — são as
+# quatro únicas filas reais do projeto (confirmado por busca em toda a
+# auditoria F8.0; Assisted Outreach, Fase 7, é deliberadamente síncrono e
+# não usa fila). `prototype_generation` adicionada na Fase 9 / Prompt 11.
 # Se uma fila nova for criada, precisa ser adicionada aqui também, ou o
 # worker nunca vai consumi-la.
-DEFAULT_QUEUES = ["discovery", "audit", "briefing"]
+DEFAULT_QUEUES = ["discovery", "audit", "briefing", "prototype_generation"]
 
 logger = get_logger(__name__)
 

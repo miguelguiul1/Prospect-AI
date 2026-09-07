@@ -59,7 +59,7 @@ services:
 
   worker:
     # Fase 8.2 — antes desta fase não existia NENHUM processo consumindo as
-    # filas Redis (discovery/audit/briefing); um job "enfileirado" ficava
+    # filas Redis (discovery/audit/briefing/prototype_generation); um job "enfileirado" ficava
     # parado para sempre, mesmo com Redis disponível (achado da auditoria
     # F8.0, seção 10). Reaproveita a MESMA imagem do backend — é o mesmo
     # código, só um entrypoint diferente (`python -m app.worker`), não um

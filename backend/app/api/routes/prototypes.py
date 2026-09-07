@@ -11,17 +11,22 @@ Fase 7).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.core.rate_limit import check_and_increment
 from app.db.session import get_db
 from app.domains.auth.dependencies import get_current_user
 from app.domains.auth.models import User
 from app.domains.prototypes.authorization import get_accessible_prototype_or_404
+from app.domains.prototypes.generation.service import GenerationInProgressError, PrototypeGenerationService
+from app.domains.prototypes.jobs import enqueue_or_run_prototype_generation
+from app.domains.prototypes.models import GenerationRun, GenerationStatus
 from app.domains.prototypes.schemas import (
     COMPONENT_CATEGORIES,
     COMPONENT_TYPES,
@@ -64,6 +69,48 @@ class PrototypeListResponse(BaseModel):
 class ComponentTypeResponse(BaseModel):
     type: str
     category: str
+
+
+class GenerationRunResponse(BaseModel):
+    id: uuid.UUID
+    prototype_id: uuid.UUID
+    company_id: uuid.UUID
+    status: GenerationStatus
+    provider: str | None
+    model: str | None
+    prompt_version: str
+    context_version: str
+    input_tokens: int | None
+    output_tokens: int | None
+    duration_ms: float | None
+    error_code: str | None
+    error_message: str | None
+    grounding_warnings: list[str] | None
+    created_at: datetime
+    completed_at: datetime | None
+    execution_mode: str | None = None
+
+
+def _generation_to_response(run: GenerationRun, *, execution_mode: str | None = None) -> GenerationRunResponse:
+    return GenerationRunResponse(
+        id=run.id,
+        prototype_id=run.prototype_id,
+        company_id=run.company_id,
+        status=run.status,
+        provider=run.provider,
+        model=run.model,
+        prompt_version=run.prompt_version,
+        context_version=run.context_version,
+        input_tokens=run.input_tokens,
+        output_tokens=run.output_tokens,
+        duration_ms=run.duration_ms,
+        error_code=run.error_code,
+        error_message=run.error_message,
+        grounding_warnings=run.grounding_warnings,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        execution_mode=execution_mode,
+    )
 
 
 def _to_response(prototype) -> PrototypeResponse:
@@ -195,3 +242,66 @@ def delete_prototype(
     prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
     PrototypeService(db).delete(prototype)
     db.commit()
+
+
+@router.post(
+    "/{prototype_id}/generate", response_model=GenerationRunResponse, status_code=status.HTTP_202_ACCEPTED
+)
+def generate_prototype(
+    prototype_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> GenerationRunResponse:
+    """Dispara a geração por IA da árvore de componentes (Fase 9 /
+    Prompt 11). Mesma autorização de qualquer outra rota de `Prototype`
+    (só quem tem `Opportunity` para a empresa). Rate limit por
+    `prototype_id` (seção 6 do Prompt 11 — nunca por usuário/empresa aqui,
+    porque o limite é especificamente "evitar um loop de regeneração
+    acidental NESTE protótipo"), política `fail_closed` (mesmo motivo de
+    Sales Brief/Outreach: custo financeiro direto)."""
+    prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
+
+    allowed = check_and_increment(
+        f"ratelimit:prototype_generation:{prototype_id}:{datetime.now(timezone.utc).date().isoformat()}",
+        max_attempts=settings.prototype_generation_rate_limit_max_per_day,
+        window_seconds=24 * 60 * 60,
+        on_unavailable="fail_closed",
+    )
+    if not allowed:
+        raise AppError(
+            "Limite diário de gerações atingido para este protótipo.",
+            code="prototype_generation_rate_limited",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    service = PrototypeGenerationService(db)
+    try:
+        run = service.start(prototype)
+    except GenerationInProgressError as exc:
+        raise AppError(str(exc), code="generation_in_progress", status_code=status.HTTP_409_CONFLICT) from exc
+
+    execution_mode = enqueue_or_run_prototype_generation(run.id, db=db)
+    db.commit()
+    db.refresh(run)
+
+    return _generation_to_response(run, execution_mode=execution_mode)
+
+
+@router.get("/{prototype_id}/generations/{generation_id}", response_model=GenerationRunResponse)
+def get_generation(
+    prototype_id: uuid.UUID,
+    generation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GenerationRunResponse:
+    get_accessible_prototype_or_404(db, prototype_id, current_user)
+
+    run = PrototypeGenerationService(db).get(prototype_id, generation_id)
+    if run is None:
+        raise AppError(
+            f"Geração {generation_id} não encontrada para o protótipo {prototype_id}.",
+            code="generation_not_found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return _generation_to_response(run)

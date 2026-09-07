@@ -43,17 +43,20 @@ protótipo com `company_id=None` fica permanentemente inacessível pela API
 (nenhum usuário pode provar posse de "nenhuma empresa"). Aceitável porque
 nenhum ambiente de produção real jamais rodou este projeto.
 
-**Consequência conhecida no frontend**: `POST /api/prototypes` agora
-exige `company_id` no payload, mas `NewPrototypeDialog`
-(`frontend/src/components/prototype-builder/new-prototype-dialog.tsx`) e
-a página `/prototypes` continuam sem nenhum seletor de empresa — criado
-como um fluxo standalone na Fase 6, antes de existir qualquer vínculo com
-Company. **O botão "Novo protótipo" desta página deixa de funcionar até
-uma fase futura adicionar um ponto de entrada com contexto de empresa**
-(ex.: a partir da página de uma `Opportunity`/`Company`) — decisão
-deliberada de não redesenhar essa UX nesta fase (fora do escopo do Prompt
-10, que é estritamente backend), já que a Fase 9 (geração por IA) precisa
-resolver exatamente esse fluxo de qualquer forma.
+**Consequência conhecida no frontend, parcialmente resolvida na Fase 9**:
+`POST /api/prototypes` exige `company_id` no payload desde o Prompt 10.
+`NewPrototypeDialog` (`frontend/src/components/prototype-builder/
+new-prototype-dialog.tsx`) e o botão "Novo protótipo" da página
+`/prototypes` continuam sem nenhum seletor de empresa — fluxo standalone
+herdado da Fase 6, ainda sem seletor — e por isso continuam
+indisponíveis (retornam um erro claro, não uma falha silenciosa). O ponto
+de entrada real chegou no Prompt 11, mas por outro caminho: a partir da
+página de detalhe do prospect (`/prospects/[companyId]`), onde o
+`company_id` já está disponível — ver `docs/prototype-generation.md`,
+seção Frontend. Redesenhar `NewPrototypeDialog` em si (ex.: adicionar um
+seletor de empresa lá também) continua fora de escopo — não há mais
+necessidade real, já que o fluxo real de criação passou a ser a partir do
+prospect.
 
 ## Modelo de dados
 
