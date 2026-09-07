@@ -217,3 +217,168 @@ export interface SearchRunListResponse {
   limit: number;
   offset: number;
 }
+
+// --- /api/auth (Fase 7) --------------------------------------------------
+
+export interface UserResponse {
+  id: string;
+  email: string;
+  name: string;
+  created_at: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  user: UserResponse;
+}
+
+// --- /api/crm (Fase 7) ----------------------------------------------------
+
+export type OpportunityStatus = "open" | "won" | "lost" | "archived";
+export type OpportunityPriority = "low" | "medium" | "high";
+export type ContactValidationStatus = "unverified" | "verified" | "invalid";
+export type ActivityTypeValue =
+  | "note"
+  | "task"
+  | "call"
+  | "meeting"
+  | "email"
+  | "whatsapp"
+  | "outreach"
+  | "stage_change"
+  | "ownership_changed"
+  | "system";
+export type ActivityStatusValue = "open" | "done";
+
+export interface PipelineStage {
+  id: string;
+  key: string;
+  name: string;
+  order: number;
+  is_won: boolean;
+  is_lost: boolean;
+}
+
+export interface OpportunitySummary {
+  id: string;
+  company_id: string;
+  company_name: string;
+  category_name: string | null;
+  region_name: string | null;
+  owner_id: string;
+  owner_name: string;
+  stage: PipelineStage;
+  status: OpportunityStatus;
+  priority: OpportunityPriority;
+  opportunity_score: number | null;
+  opportunity_tier: OpportunityTier | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface OpportunityListResponse {
+  items: OpportunitySummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PipelineBoardColumn {
+  stage: PipelineStage;
+  opportunities: OpportunitySummary[];
+}
+
+export interface PipelineBoardResponse {
+  columns: PipelineBoardColumn[];
+}
+
+export interface OpportunityKpis {
+  open_count: number;
+  new_count: number;
+  in_negotiation_count: number;
+  meetings_count: number;
+  won_count: number;
+  lost_count: number;
+  overdue_tasks_count: number;
+}
+
+export interface ContactSummary {
+  id: string;
+  name: string;
+  role: string | null;
+  email: string | null;
+  phone: string | null;
+  validation_status: ContactValidationStatus;
+}
+
+export interface Contact extends ContactSummary {
+  company_id: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityItem {
+  id: string;
+  opportunity_id?: string;
+  type: ActivityTypeValue;
+  title: string | null;
+  description: string | null;
+  status: ActivityStatusValue | null;
+  due_at: string | null;
+  completed_at: string | null;
+  context?: Record<string, unknown> | null;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface OpportunityDetail {
+  id: string;
+  status: OpportunityStatus;
+  priority: OpportunityPriority;
+  stage: PipelineStage;
+  owner_id: string;
+  owner_name: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+
+  company_id: string;
+  company_name: string;
+  category_name: string | null;
+  region_name: string | null;
+  website_url: string | null;
+  site_state: DataState | null;
+  website_quality_score: number | null;
+  opportunity_score: number | null;
+  opportunity_tier: OpportunityTier | null;
+  opportunity_confidence: ConfidenceLevel | null;
+  opportunity_breakdown: OpportunityBreakdown | null;
+  sales_brief_status: SalesBriefStatus | null;
+  sales_brief_content: SalesBriefContent | null;
+
+  contacts: ContactSummary[];
+  recent_activities: ActivityItem[];
+}
+
+// --- /api/crm outreach (Fase 7) -------------------------------------------
+
+export type OutreachChannel = "email" | "whatsapp" | "other";
+export type OutreachStatus = "draft" | "ready" | "sent_manually" | "cancelled";
+
+export interface OutreachMessage {
+  id: string;
+  opportunity_id: string;
+  contact_id: string | null;
+  channel: OutreachChannel;
+  status: OutreachStatus;
+  subject: string | null;
+  message: string | null;
+  rationale: string | null;
+  evidence_ids: string[];
+  generated_by_ai: boolean;
+  created_at: string;
+  updated_at: string;
+}

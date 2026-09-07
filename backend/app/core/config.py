@@ -121,11 +121,40 @@ class Settings(BaseSettings):
     anthropic_http_read_timeout_seconds: float = 30.0
     anthropic_max_tokens: int = 1500
 
+    # --- Autenticação (Fase 7) -----------------------------------------------
+    # Estratégia definida pelo ADR-001 da auditoria F7.0: JWT próprio (sem
+    # provedor gerenciado externo), consistente com a postura do projeto de
+    # não adicionar dependência de terceiro além do estritamente necessário.
+    # O default abaixo é INSEGURO DE PROPÓSITO (só serve para dev/teste sem
+    # `.env`) — `is_production` nunca deve ficar True com este valor; ver
+    # `app.domains.auth.security`, que registra um aviso caso isso ocorra.
+    jwt_secret_key: str = "dev-insecure-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24  # 24h
+
+    # Rate limiting (Fase 7) — reaproveita o Redis já configurado (mesmo
+    # "best-effort, nunca derruba a aplicação" já usado pelo cache do
+    # Discovery). Login: proteção contra força bruta. Outreach: controle de
+    # custo de IA (arquitetura v0.2, seção "cost control").
+    auth_login_rate_limit_max_attempts: int = 10
+    auth_login_rate_limit_window_seconds: int = 300
+    outreach_rate_limit_max_per_day: int = 20
+
+    # --- Assisted Outreach (Fase 7) ------------------------------------------
+    # Reaproveita o mesmo provider/config de IA do Sales Brief
+    # (`anthropic_api_key`/`anthropic_model` acima) — só o limite de tokens é
+    # menor, porque uma mensagem de outreach é bem mais curta que um briefing.
+    outreach_max_tokens: int = 700
+
     # --- Reservado para integrações de fases futuras -----------------------
-    # Nenhum destes campos é lido por qualquer código das Fases 0-4.
+    # Nenhum destes campos é lido por qualquer código das Fases 0-7.
     google_custom_search_api_key: str | None = None
     google_custom_search_cx: str | None = None
     instagram_graph_access_token: str | None = None
+    # Provedores de envio real de Outreach (Nível 2, F7.7+ futuro) — apenas
+    # reservados, nunca lidos nesta fase (Assisted Outreach não envia nada).
+    email_provider_api_key: str | None = None
+    whatsapp_provider_api_key: str | None = None
     # -------------------------------------------------------------------
 
     @property

@@ -1,10 +1,14 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { ScanSearch, Gauge } from "lucide-react";
+import { ScanSearch, Gauge, Handshake, ArrowRight } from "lucide-react";
 import { getCompany } from "@/lib/api/companies";
+import { getOpenOpportunityForCompany } from "@/lib/api/crm";
 import { ApiError } from "@/lib/api/client";
+import { Button } from "@/components/ui/button";
 import { ActionButton } from "@/components/prospect-detail/action-button";
 import { runAuditAction, computeScoreAction } from "@/app/prospects/[companyId]/actions";
+import { createOpportunityAction } from "@/app/crm/actions";
 import { IdentitySection } from "@/components/prospect-detail/identity-section";
 import { DiscoverySection } from "@/components/prospect-detail/discovery-section";
 import { WebsiteSection } from "@/components/prospect-detail/website-section";
@@ -47,7 +51,10 @@ export default async function ProspectDetailPage({
   params: Promise<{ companyId: string }>;
 }) {
   const { companyId } = await params;
-  const company = await loadCompany(companyId);
+  const [company, openOpportunity] = await Promise.all([
+    loadCompany(companyId),
+    getOpenOpportunityForCompany(companyId),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -76,6 +83,21 @@ export default async function ProspectDetailPage({
             icon={<Gauge className="size-4" />}
             variant="outline"
           />
+          {openOpportunity ? (
+            <Button size="sm" render={<Link href={`/crm/opportunities/${openOpportunity.id}`} />}>
+              <Handshake className="size-4" />
+              Abrir no CRM
+              <ArrowRight className="size-4" />
+            </Button>
+          ) : (
+            <ActionButton
+              action={createOpportunityAction}
+              companyId={company.id}
+              label="Criar oportunidade"
+              pendingLabel="Criando…"
+              icon={<Handshake className="size-4" />}
+            />
+          )}
         </div>
       </div>
 

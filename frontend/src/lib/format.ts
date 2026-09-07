@@ -1,8 +1,11 @@
 import type {
+  ActivityTypeValue,
   AuditStatus,
   ConfidenceLevel,
   DataState,
   OpportunityTier,
+  OutreachChannel,
+  OutreachStatus,
   SearchRunStatus,
 } from "@/lib/api/types";
 
@@ -138,3 +141,31 @@ export const DIMENSION_LABEL: Record<string, string> = {
 export function dimensionLabel(key: string): string {
   return DIMENSION_LABEL[key] ?? key;
 }
+
+// --- CRM (Fase 7) ---------------------------------------------------------
+
+export const ACTIVITY_TYPE_LABEL: Record<ActivityTypeValue, string> = {
+  note: "Nota",
+  task: "Tarefa",
+  call: "Ligação",
+  meeting: "Reunião",
+  email: "E-mail",
+  whatsapp: "WhatsApp",
+  outreach: "Outreach",
+  stage_change: "Mudança de etapa",
+  ownership_changed: "Responsável alterado",
+  system: "Sistema",
+};
+
+export const OUTREACH_CHANNEL_LABEL: Record<OutreachChannel, string> = {
+  email: "E-mail",
+  whatsapp: "WhatsApp",
+  other: "Outro canal",
+};
+
+export const OUTREACH_STATUS_LABEL: Record<OutreachStatus, string> = {
+  draft: "Rascunho",
+  ready: "Pronto para envio",
+  sent_manually: "Enviado manualmente",
+  cancelled: "Cancelado",
+};

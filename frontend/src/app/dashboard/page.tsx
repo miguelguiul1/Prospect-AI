@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Building2, TrendingUp, ScanSearch, Gauge, ArrowRight } from "lucide-react";
+import { Building2, TrendingUp, ScanSearch, Gauge, ArrowRight, Handshake, AlertTriangle } from "lucide-react";
 import { getDashboardStats, listCompanies } from "@/lib/api/companies";
 import { listDiscoveryRuns } from "@/lib/api/discovery";
+import { getKpis } from "@/lib/api/crm";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { ProspectsTable } from "@/components/prospects/prospects-table";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -18,10 +19,11 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
-  const [stats, priority, recentRuns] = await Promise.all([
+  const [stats, priority, recentRuns, crmKpis] = await Promise.all([
     getDashboardStats(),
     listCompanies({ sort_by: "opportunity_score", limit: 8 }),
     listDiscoveryRuns({ limit: 5 }),
+    getKpis(),
   ]);
 
   const hasAnyProspect = stats.total_companies > 0;
@@ -61,6 +63,26 @@ export default async function DashboardPage() {
           icon={<Gauge className="size-5" />}
         />
       </div>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-heading text-base font-medium text-foreground">CRM</h2>
+          <Button size="sm" variant="ghost" render={<Link href="/crm" />}>
+            Ver CRM
+            <ArrowRight className="size-4" />
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <KpiCard label="Oportunidades abertas" value={crmKpis.open_count} icon={<Handshake className="size-5" />} />
+          <KpiCard
+            label="Tarefas atrasadas"
+            value={crmKpis.overdue_tasks_count}
+            icon={<AlertTriangle className="size-5" />}
+            className={crmKpis.overdue_tasks_count > 0 ? "border-amber-300 dark:border-amber-800" : undefined}
+          />
+          <KpiCard label="Ganhas" value={crmKpis.won_count} icon={<TrendingUp className="size-5" />} />
+        </div>
+      </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">

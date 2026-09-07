@@ -1,10 +1,11 @@
 # Prospect AI
 
-> **Fase 6 — Prototype Builder.** Este README descreve o estado real do
+> **Fase 7 — CRM + Outreach.** Este README descreve o estado real do
 > projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
-> Opportunity Score, Sales Brief, o Dashboard e a primeira camada do
-> Prototype Builder estão implementados; CRM/geração de código/publicação
-> ainda não.
+> Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder e agora
+> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach
+> estão implementados; geração de código/publicação/envio automatizado de
+> outreach ainda não. Ver `docs/crm.md`.
 
 ## O que é
 
@@ -40,7 +41,11 @@ até aqui, as **Fases 0, 1, 2, 3, 4, 5 e 6** desse roadmap.
   consumidas/criadas, decisões de UX, segurança, testes, limitações.
 - `docs/prototype-builder.md` — o Prototype Builder: modelo de dados,
   catálogo de componentes, segurança, arquitetura do editor, limitações
-  (inclui o achado de que o projeto não tem autenticação em nenhuma fase).
+  (histórico: nas Fases 0-6 o projeto não tinha autenticação — resolvido na
+  Fase 7, ver abaixo).
+- `docs/crm.md` — Autenticação (JWT próprio), ownership/autorização, CRM
+  (Opportunity/Pipeline/Contacts/Activities), Assisted Outreach + IA,
+  segurança, variáveis de ambiente novas, limitações.
 - `docs/development.md` — como rodar, testar e migrar backend e frontend.
 
 ## Stack

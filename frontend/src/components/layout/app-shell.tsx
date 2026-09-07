@@ -2,10 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Menu, Radar, Plus } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Menu, Radar, Plus, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { logoutAction } from "@/lib/auth/actions";
+import type { UserResponse } from "@/lib/api/types";
 
 function Wordmark() {
   return (
@@ -20,8 +23,18 @@ function Wordmark() {
   );
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+const AUTH_ROUTES = ["/login", "/register"];
+
+export function AppShell({ children, user }: { children: ReactNode; user: UserResponse | null }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // `/login`/`/register` renderizam sem a barra lateral/topbar autenticada
+  // — mostrar navegação para rotas protegidas antes de haver sessão seria
+  // enganoso (o middleware já bloquearia o clique de qualquer forma).
+  if (AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`))) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -34,7 +47,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <SidebarNav />
         </div>
         <div className="border-t border-sidebar-border px-4 py-3 text-xs text-sidebar-foreground/60">
-          Fase 5 · Dashboard
+          Fase 7 · CRM
         </div>
       </aside>
 
@@ -67,6 +80,18 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Plus className="size-4" />
               Nova pesquisa
             </Button>
+            {user ? (
+              <div className="flex items-center gap-2 border-l border-border pl-2">
+                <span className="hidden max-w-[14ch] truncate text-xs text-muted-foreground sm:inline" title={user.email}>
+                  {user.name}
+                </span>
+                <form action={logoutAction}>
+                  <Button type="submit" size="icon" variant="ghost" aria-label="Sair">
+                    <LogOut className="size-4" />
+                  </Button>
+                </form>
+              </div>
+            ) : null}
           </div>
         </header>
 

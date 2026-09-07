@@ -60,7 +60,7 @@ class AnthropicProvider(SalesBriefProvider):
     def is_configured(self) -> bool:
         return bool(self._settings.anthropic_api_key)
 
-    def generate(self, *, system: str, user: str) -> ProviderResponse:
+    def generate(self, *, system: str, user: str, max_tokens: int | None = None) -> ProviderResponse:
         if not self.is_configured():
             raise ProviderUnavailableError(
                 "ANTHROPIC_API_KEY não configurada — provider anthropic indisponível. "
@@ -70,7 +70,7 @@ class AnthropicProvider(SalesBriefProvider):
 
         body: dict[str, Any] = {
             "model": self._settings.anthropic_model,
-            "max_tokens": self._settings.anthropic_max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self._settings.anthropic_max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }

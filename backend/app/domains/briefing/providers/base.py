@@ -40,8 +40,15 @@ class SalesBriefProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generate(self, *, system: str, user: str) -> ProviderResponse:
+    def generate(self, *, system: str, user: str, max_tokens: int | None = None) -> ProviderResponse:
         """Executa uma única chamada de geração de texto.
+
+        `max_tokens=None` (padrão) usa o limite configurado do provider
+        (`Settings.anthropic_max_tokens`) — o Sales Brief nunca precisa
+        passar isto explicitamente. Adicionado na Fase 7 para o Assisted
+        Outreach reaproveitar este MESMO provider com um teto de tokens
+        menor (mensagens de outreach são bem mais curtas que um briefing),
+        sem duplicar a integração com a API da Anthropic.
 
         Deve levantar uma subclasse de
         `app.domains.briefing.providers.errors.SalesBriefProviderError` em
