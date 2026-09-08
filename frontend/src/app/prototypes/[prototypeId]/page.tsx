@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getPrototype } from "@/lib/api/prototypes";
+import { getPrototype, listRefinements } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { PrototypeBuilder } from "@/components/prototype-builder/prototype-builder";
 
@@ -28,14 +28,20 @@ export default async function PrototypeBuilderPage({
   const { prototypeId } = await params;
 
   let prototype;
+  let refinements;
   try {
-    prototype = await getPrototype(prototypeId);
+    [prototype, refinements] = await Promise.all([getPrototype(prototypeId), listRefinements(prototypeId)]);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) notFound();
     throw error;
   }
 
   return (
-    <PrototypeBuilder prototypeId={prototype.id} initialName={prototype.name} initialComponents={prototype.components} />
+    <PrototypeBuilder
+      prototypeId={prototype.id}
+      initialName={prototype.name}
+      initialComponents={prototype.components}
+      initialRefinements={refinements}
+    />
   );
 }

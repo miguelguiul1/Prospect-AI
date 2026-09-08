@@ -1,15 +1,17 @@
 # Prospect AI
 
-> **Pós-Fase 9 (+ Prompts 10, 11 e 12).** Este README descreve o estado
-> real do projeto nesta fase. Discovery, Identity Resolution, Digital
-> Audit, Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder,
-> Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach, o
-> hardening de produção da Fase 8 (CI/CD, worker RQ real, observabilidade,
-> segurança), a geração de protótipo por IA (Fase 9 — Context Builder +
-> Generation Engine, uma única chamada, catálogo fechado de componentes),
-> e agora refinamento por linguagem natural + versionamento
-> (`PrototypeVersion`, histórico linear) estão implementados. Ver
-> `docs/crm.md`, `docs/production-readiness.md`,
+> **Pós-Fase 9 (+ Prompts 10, 11, 12 e 13).** Este README descreve o
+> estado real do projeto nesta fase. Discovery, Identity Resolution,
+> Digital Audit, Opportunity Score, Sales Brief, o Dashboard, o Prototype
+> Builder, Autenticação + CRM (pipeline, contatos, timeline) + Assisted
+> Outreach, o hardening de produção da Fase 8 (CI/CD, worker RQ real,
+> observabilidade, segurança), a geração de protótipo por IA (Fase 9 —
+> Context Builder + Generation Engine, uma única chamada, catálogo
+> fechado de componentes), refinamento por linguagem natural +
+> versionamento (`PrototypeVersion`, histórico linear), e agora preview
+> responsivo (Desktop/Tablet/Mobile) + chat de refinamento com histórico
+> (só de apresentação — não influencia a geração) estão implementados.
+> Ver `docs/crm.md`, `docs/production-readiness.md`,
 > `docs/prototype-generation.md` e `docs/prototype-refinement.md`.
 
 ## O que é
@@ -462,7 +464,7 @@ real e opcional da Fase 1, ignorado por padrão. **Frontend: 131 testes**
 segurança do renderer, canvas, painel de propriedades, paleta, diálogo de
 criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
 
-## Fase 7, Fase 8 e Fase 9 (+ Prompts 10, 11 e 12)
+## Fase 7, Fase 8 e Fase 9 (+ Prompts 10, 11, 12 e 13)
 
 Não narradas fase a fase aqui como as anteriores (para não duplicar
 conteúdo) — a documentação de referência é `docs/crm.md` (Fase 7:
@@ -475,8 +477,11 @@ classificação FACT/SIGNAL/UNKNOWN/INFERENCE, Generation Engine de uma
 única chamada, validação de segurança do artefato gerado,
 `GenerationRun`/`ContextSnapshot`), e `docs/prototype-refinement.md`
 (Prompt 12: refinamento por linguagem natural sobre o mesmo Generation
-Engine, `PrototypeVersion` com histórico linear). O Prompt 10 fechou o
-vínculo `Prototype`↔`Company` que faltava antes da Fase 9 — ver
+Engine, `PrototypeVersion` com histórico linear; Prompt 13: preview
+responsivo e chat de refinamento com histórico só de apresentação — sem
+mudança no Generation Engine nem no prompt enviado à Anthropic). O
+Prompt 10 fechou o vínculo `Prototype`↔`Company` que faltava antes da
+Fase 9 — ver
 `docs/prototype-builder.md` e `docs/adr/`.
 
 ## O que NÃO está implementado ainda
@@ -504,14 +509,17 @@ vínculo `Prototype`↔`Company` que faltava antes da Fase 9 — ver
   e `docs/prototype-builder.md`). Autenticação/autorização em si **já
   existem** desde a Fase 7 (JWT próprio) e cobrem o Prototype Builder desde
   o Prompt 10.
-- No Prototype Builder: drag-and-drop, preview responsivo (desktop/
-  tablet/mobile), chat com histórico de conversa, branching de versões,
-  publicação/deploy, domínio personalizado, marketplace de componentes,
-  sistema de plugins (ver `docs/prototype-builder.md`, "O que NÃO foi
-  implementado"). **Geração automática por IA (Fase 9), refinamento por
-  linguagem natural e versionamento com histórico linear (`
-  PrototypeVersion`, Prompt 12) já estão implementados** — ver
-  `docs/prototype-generation.md` e `docs/prototype-refinement.md`;
+- No Prototype Builder: drag-and-drop, branching de versões, publicação/
+  deploy, domínio personalizado, marketplace de componentes, sistema de
+  plugins, "responsive props" reais no schema de componentes (ver gap
+  documentado em `docs/prototype-builder.md`), e histórico de
+  refinamento influenciando a próxima geração (decisão deliberada de
+  manter só de apresentação — ver `docs/prototype-refinement.md`) (ver
+  `docs/prototype-builder.md`, "O que NÃO foi implementado"). **Geração
+  automática por IA (Fase 9), refinamento por linguagem natural com chat
+  de histórico, versionamento com histórico linear (`PrototypeVersion`),
+  e preview responsivo (Desktop/Tablet/Mobile) já estão implementados**
+  — ver `docs/prototype-generation.md` e `docs/prototype-refinement.md`;
   geração de HTML/CSS/JS executável continua fora de escopo em qualquer
   fase (nunca planejada — o Builder gera uma árvore de componentes do
   catálogo fechado, nunca código).
@@ -581,13 +589,17 @@ e `docs/prototype-builder.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Refinamento por linguagem natural + Versionamento (Prompt 12) já está
-implementado** — ver `docs/prototype-refinement.md` e
-[ADR-014](./docs/adr/014-linear-prototype-versioning.md). O que fica
-para uma próxima fase de UX avançada do Prototype Builder, se autorizada
-(conteúdo não detalhado aqui — ver o prompt de implementação quando
-autorizado): preview responsivo (desktop/tablet/mobile) e um chat com
-histórico de conversa (hoje o refinamento é sempre um pedido único e
-independente, sem contexto de mensagens anteriores) — ambos citados
-explicitamente como fora de escopo do Prompt 12. Não inicia
-automaticamente: aguarda aprovação explícita.
+**Refinamento por linguagem natural + Versionamento (Prompt 12) e UX
+avançada do Prototype Builder — preview responsivo + chat de
+refinamento (Prompt 13) já estão implementados** — ver
+`docs/prototype-refinement.md`, `docs/prototype-builder.md` e
+[ADR-014](./docs/adr/014-linear-prototype-versioning.md). O ciclo central
+do produto (prospectar → qualificar → gerar protótipo por IA → refinar
+por linguagem natural → versionar) está completo e já foi validado contra
+a API real da Anthropic mais de uma vez (Prompts 11 e 12).
+
+O que resta, se autorizado, não é mais uma capacidade central faltando:
+é a decisão de Publicação (export/deploy do protótipo gerado) —
+deliberadamente fora de escopo em toda fase até aqui, uma decisão de
+produto opcional, não um bloqueador técnico para o uso real do fluxo
+atual. Não inicia automaticamente: aguarda aprovação explícita.

@@ -4,7 +4,9 @@ import Link from "next/link";
 import { ArrowLeft, Undo2, Redo2, Eye, Pencil, Loader2, Check, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PreviewDeviceSelector } from "@/components/prototype-builder/preview-device-selector";
 import type { BuilderAction, BuilderState } from "@/components/prototype-builder/builder-reducer";
+import type { PreviewDevice } from "@/lib/prototype/preview-devices";
 
 export function Toolbar({
   prototypeId,
@@ -15,6 +17,8 @@ export function Toolbar({
   onSave,
   saving,
   dirty,
+  previewDevice,
+  onPreviewDeviceChange,
 }: {
   prototypeId: string;
   state: BuilderState;
@@ -24,6 +28,8 @@ export function Toolbar({
   onSave: () => void;
   saving: boolean;
   dirty: boolean;
+  previewDevice: PreviewDevice;
+  onPreviewDeviceChange: (device: PreviewDevice) => void;
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
@@ -49,6 +55,10 @@ export function Toolbar({
 
       <div className="ml-auto flex items-center gap-2">
         {dirty && !saving ? <span className="text-xs text-muted-foreground">Alterações não salvas</span> : null}
+
+        {state.mode === "preview" ? (
+          <PreviewDeviceSelector device={previewDevice} onChange={onPreviewDeviceChange} />
+        ) : null}
 
         <Button
           size="sm"

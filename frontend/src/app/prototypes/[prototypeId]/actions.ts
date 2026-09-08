@@ -3,10 +3,11 @@
 import { revalidatePath } from "next/cache";
 import {
   getPrototype,
+  listRefinements,
   refinePrototype,
   restorePrototypeVersion,
   updatePrototype,
-  type GenerationRun,
+  type RefinementMessage,
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import type { ComponentNode } from "@/lib/prototype/types";
@@ -36,29 +37,40 @@ export async function savePrototypeAction(
 }
 
 export interface RefineResult {
-  status: "success" | "error";
+  // "error" aqui é só para falha EXCEPCIONAL da chamada em si (rede,
+  // 401/404/429) — nunca para "o refinamento não deu certo": esse
+  // resultado é normal e vira uma mensagem no chat como qualquer outra
+  // (`refinements` inclui a tentativa que falhou, com seu `errorMessage`).
+  status: "ok" | "error";
   message?: string;
-  run?: GenerationRun;
+  refinements?: RefinementMessage[];
   components?: ComponentNode[];
 }
 
 /**
- * Refinamento por linguagem natural (Fase 9 / Prompt 12). Síncrono nesta
- * máquina (mesmo motivo de `generatePrototypeAction`, Prompt 11): a
- * promise só resolve quando a geração já terminou (sucesso OU falha) —
- * nunca fica "pending" de verdade aqui. Em caso de sucesso, busca o
- * protótipo atualizado para devolver a árvore nova ao Builder sem exigir
- * um reload completo da página.
+ * Refinamento por linguagem natural (Fase 9 / Prompt 12; UI de chat no
+ * Prompt 13). Síncrono nesta máquina (mesmo motivo de
+ * `generatePrototypeAction`, Prompt 11): a promise só resolve quando a
+ * geração já terminou (sucesso OU falha) — nunca fica "pending" de
+ * verdade aqui.
+ *
+ * Em vez de reconstruir a "mensagem" do chat manualmente a partir da
+ * resposta de `/refine`, busca o histórico COMPLETO via `listRefinements`
+ * depois — uma única fonte de verdade para o formato de uma mensagem
+ * (histórica ou recém-criada), sem duplicar lógica de conversão em dois
+ * lugares que poderiam divergir.
  */
 export async function refinePrototypeAction(prototypeId: string, instruction: string): Promise<RefineResult> {
   try {
     const run = await refinePrototype(prototypeId, instruction);
+    const refinements = await listRefinements(prototypeId);
     if (run.status === "failed") {
-      return { status: "error", message: run.errorMessage ?? "Não foi possível aplicar o refinamento.", run };
+      revalidatePath(`/prototypes/${prototypeId}`);
+      return { status: "ok", refinements };
     }
     const updated = await getPrototype(prototypeId);
     revalidatePath(`/prototypes/${prototypeId}`);
-    return { status: "success", run, components: updated.components };
+    return { status: "ok", refinements, components: updated.components };
   } catch (error) {
     if (error instanceof ApiError) {
       return { status: "error", message: error.message };

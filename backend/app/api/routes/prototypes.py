@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
@@ -164,6 +164,44 @@ def _version_to_detail(version: PrototypeVersion) -> PrototypeVersionDetailRespo
         instruction=version.generation_run.instruction if version.generation_run is not None else None,
         restored_from_version_number=version.restored_from_version_number,
         created_at=version.created_at,
+    )
+
+
+class RefinementHistoryItemResponse(BaseModel):
+    """Uma entrada do "chat" de refinamento (Prompt 13, seção 2) — um
+    `GenerationRun` com `instruction` preenchido (nunca a geração
+    inicial, que tem `instruction=None`). Nunca uma tabela nova: é uma
+    leitura derivada de `GenerationRun` + `PrototypeVersion` que já
+    existiam desde o Prompt 12, montada só para exibição — decisão
+    "histórico só de apresentação" documentada em
+    `docs/prototype-refinement.md`."""
+
+    id: uuid.UUID
+    instruction: str
+    status: GenerationStatus
+    error_message: str | None
+    grounding_warnings: list[str] | None
+    diff_summary: dict | None
+    version_id: uuid.UUID | None
+    version_number: int | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+def _refinement_to_response(run: GenerationRun) -> RefinementHistoryItemResponse:
+    assert run.instruction is not None  # garantido pelo filtro da query em list_refinements
+    version = run.version
+    return RefinementHistoryItemResponse(
+        id=run.id,
+        instruction=run.instruction,
+        status=run.status,
+        error_message=run.error_message,
+        grounding_warnings=run.grounding_warnings,
+        diff_summary=run.diff_summary,
+        version_id=version.id if version is not None else None,
+        version_number=version.version_number if version is not None else None,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
     )
 
 
@@ -438,6 +476,30 @@ def refine_prototype(
     db.refresh(run)
 
     return _generation_to_response(run, execution_mode=execution_mode)
+
+
+@router.get("/{prototype_id}/refinements", response_model=list[RefinementHistoryItemResponse])
+def list_refinements(
+    prototype_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[RefinementHistoryItemResponse]:
+    """Histórico do "chat" de refinamento (Prompt 13, seção 2), mais
+    antigo primeiro (ordem de leitura de uma conversa) — todo
+    `GenerationRun` com `instruction` preenchido para este `Prototype`,
+    SUCEEDED ou FAILED (a geração inicial, com `instruction=None`, nunca
+    aparece aqui: ela já é a v1 na lista de versões). `joinedload` evita
+    N+1 ao resolver `version_id`/`version_number` de cada entrada bem-
+    sucedida."""
+    get_accessible_prototype_or_404(db, prototype_id, current_user)
+    runs = (
+        db.query(GenerationRun)
+        .options(joinedload(GenerationRun.version))
+        .filter(GenerationRun.prototype_id == prototype_id, GenerationRun.instruction.isnot(None))
+        .order_by(GenerationRun.created_at.asc())
+        .all()
+    )
+    return [_refinement_to_response(r) for r in runs]
 
 
 @router.get("/{prototype_id}/versions", response_model=list[PrototypeVersionListItemResponse])

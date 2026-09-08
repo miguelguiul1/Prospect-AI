@@ -171,10 +171,52 @@ TestRefinementGroundingViolation` — simula exatamente esse cenário
 (pedido de "24 horas" + telefone inventado) e confirma que o grounding
 warning aparece, sem bloquear o refinamento.
 
+## Chat de refinamento: histórico só de apresentação (Prompt 13)
+
+A UI evoluiu de um campo único (`RefinementBar`, Prompt 12) para um chat
+(`RefinementChat`) — mas a pergunta de fundo do Prompt 13 era sobre o
+BACK-END: esse histórico influencia a próxima chamada de refinamento
+(ex.: para o modelo entender "isso" em "deixa isso mais escuro também"),
+ou é só uma lista na tela?
+
+**Decisão: só de apresentação.** Cada chamada a `PrototypeGenerationService.
+execute()` continua recebendo exatamente o mesmo material de antes —
+`PrototypeContext` renovado + `Prototype.components` atual + a instrução
+ÚNICA deste pedido (`build_refinement_prompt`, inalterado). Nenhuma
+instrução anterior é reenviada como contexto adicional.
+
+Por quê: mais simples, mais barato (nenhum crescimento de tokens numa
+sessão de refinamento longa — o gatilho que a própria instrução do
+Prompt 13 pediu para vigiar caso a segunda opção fosse escolhida), e já
+resolve a queixa de UX real ("não dá pra ver o que já foi pedido antes")
+sem tocar no Generation Engine. Mesma filosofia de "evoluir só com
+evidência de necessidade" já usada para a decisão de não usar
+multi-agente (`docs/architecture.md`) — migrar para "histórico influencia
+geração" fica para uma fase futura, só se o uso real mostrar que o
+usuário precisa referenciar um pedido anterior implicitamente
+("isso"/"aquele botão") sem repeti-lo.
+
+**Onde o histórico já estava persistido, confirmado antes de implementar**
+(não assumido): `GenerationRun.instruction` já existia desde o Prompt 12
+— nenhum campo novo foi necessário. O único código novo é de LEITURA:
+`GET /api/prototypes/{id}/refinements` monta a lista a partir de
+`GenerationRun` (filtrando `instruction IS NOT NULL`, o que exclui a
+geração inicial) + `PrototypeVersion` (via `GenerationRun.version`, para
+o link "ver versão N" de uma entrada bem-sucedida). Uma tentativa que
+FALHOU também aparece — sem versão, com a mensagem de erro — porque ela
+é uma linha real em `GenerationRun`, só não produziu uma
+`PrototypeVersion`.
+
+Nenhuma chamada real à Anthropic foi necessária nem feita para validar
+isso: nada no formato do prompt mudou, então a mesma cobertura de
+`FakeGenerationProvider` do Prompt 12 continua válida — só a camada de
+leitura/exibição é nova.
+
 ## API
 
 ```
 POST /api/prototypes/{id}/refine                          → aplica um refinamento (202, mesmo formato de /generate)
+GET  /api/prototypes/{id}/refinements                      → histórico do chat, mais antigo primeiro (Prompt 13)
 GET  /api/prototypes/{id}/versions                         → lista o histórico, mais recente primeiro
 GET  /api/prototypes/{id}/versions/{version_id}            → detalhe de uma versão (árvore completa)
 POST /api/prototypes/{id}/versions/{version_id}/restore    → cria uma versão nova idêntica à antiga
@@ -197,24 +239,33 @@ chave). Restaurar uma versão NUNCA chama IA — sem custo, sem rate limit.
 
 ## Frontend
 
-- **Refinamento**: `RefinementBar` (dentro do Prototype Builder) — um
-  campo de texto + botão "Aplicar" com estado de carregamento, NUNCA um
-  chat com histórico de mensagens (fora de escopo, seção 6/7 do
-  Prompt 12). Em sucesso, despacha `LOAD` no reducer do Builder para
-  substituir a árvore pela versão nova sem recarregar a página; avisos de
-  grounding aparecem inline.
+- **Refinamento**: `RefinementChat` (dentro do Prototype Builder, Prompt
+  13 — evolução de `RefinementBar`, Prompt 12) — cada pedido vira uma
+  "mensagem" do usuário, e a versão resultante (ou o erro) vira a
+  "resposta" do sistema, com link para ver aquela versão. Sem edição de
+  mensagens antigas, sem "regenerar esta resposta" (fora de escopo,
+  seção 2 do Prompt 13). Em sucesso, despacha `LOAD` no reducer do
+  Builder para substituir a árvore pela versão nova sem recarregar a
+  página; avisos de grounding aparecem junto da mensagem correspondente.
 - **Versões**: `/prototypes/{id}/versions` lista o histórico (data,
   descrição curta derivada da instrução ou "Geração inicial por IA"/
   "Restaurado da versão N"); `/prototypes/{id}/versions/{versionId}`
   mostra um preview somente-leitura (`VersionPreview`, reaproveita
   `Canvas` em modo preview) com um botão "Restaurar esta versão".
+- **Preview responsivo** (Prompt 13): seletor Desktop/Tablet/Mobile no
+  modo preview do Builder — ver `docs/prototype-builder.md`, "Preview
+  responsivo", para a implementação e o gap de schema documentado.
 
 ## Não implementado nesta fase (fora de escopo, por instrução explícita)
 
 - Branching de versões.
-- Chat com histórico de conversa (o refinamento é sempre um pedido único
-  e independente, sem contexto de mensagens anteriores).
-- Preview responsivo (desktop/tablet/mobile).
-- Export/deploy/publicação.
+- Histórico de refinamento influenciando a próxima geração (decisão
+  "só de apresentação" acima) — pode virar uma fase futura sob evidência
+  de necessidade real.
+- Edição de mensagens antigas do chat, ou "regenerar esta resposta".
+- Export/deploy/publicação/preview público compartilhável.
+- Multi-agente.
+- "Responsive props" no schema de componentes (ver gap documentado em
+  `docs/prototype-builder.md`).
 - Versionamento de edição manual via `PUT` (ver limitação documentada
   acima).

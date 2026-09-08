@@ -236,6 +236,56 @@ export async function refinePrototype(prototypeId: string, instruction: string):
   return toGenerationRun(response);
 }
 
+interface RefinementHistoryItemResponse {
+  id: string;
+  instruction: string;
+  status: "pending" | "succeeded" | "failed";
+  error_message: string | null;
+  grounding_warnings: string[] | null;
+  diff_summary: Record<string, unknown> | null;
+  version_id: string | null;
+  version_number: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+/** Uma "mensagem" do chat de refinamento (Fase 9 / Prompt 13) — o pedido
+ * do usuário + o resultado (versão nova, ou o erro). Histórico só de
+ * apresentação: nunca é reenviado à Anthropic como contexto adicional
+ * (decisão documentada em `docs/prototype-refinement.md`). */
+export interface RefinementMessage {
+  id: string;
+  instruction: string;
+  status: "pending" | "succeeded" | "failed";
+  errorMessage: string | null;
+  groundingWarnings: string[] | null;
+  diffSummary: Record<string, unknown> | null;
+  versionId: string | null;
+  versionNumber: number | null;
+  createdAt: string;
+}
+
+function toRefinementMessage(response: RefinementHistoryItemResponse): RefinementMessage {
+  return {
+    id: response.id,
+    instruction: response.instruction,
+    status: response.status,
+    errorMessage: response.error_message,
+    groundingWarnings: response.grounding_warnings,
+    diffSummary: response.diff_summary,
+    versionId: response.version_id,
+    versionNumber: response.version_number,
+    createdAt: response.created_at,
+  };
+}
+
+/** Histórico completo do chat de refinamento, do mais antigo ao mais
+ * recente — inclui tentativas que falharam (sem versão resultante). */
+export async function listRefinements(prototypeId: string): Promise<RefinementMessage[]> {
+  const response = await apiGet<RefinementHistoryItemResponse[]>(`/api/prototypes/${prototypeId}/refinements`);
+  return response.map(toRefinementMessage);
+}
+
 interface PrototypeVersionListItemResponse {
   id: string;
   version_number: number;

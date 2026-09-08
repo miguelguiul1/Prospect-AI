@@ -6,9 +6,11 @@ import { Toolbar } from "@/components/prototype-builder/toolbar";
 import { ComponentPalette } from "@/components/prototype-builder/component-palette";
 import { Canvas } from "@/components/prototype-builder/canvas";
 import { PropertyPanel } from "@/components/prototype-builder/property-panel";
-import { RefinementBar } from "@/components/prototype-builder/refinement-bar";
+import { RefinementChat } from "@/components/prototype-builder/refinement-chat";
 import { savePrototypeAction } from "@/app/prototypes/[prototypeId]/actions";
 import type { ComponentNode } from "@/lib/prototype/types";
+import type { RefinementMessage } from "@/lib/api/prototypes";
+import { PREVIEW_DEVICE_WIDTH, type PreviewDevice } from "@/lib/prototype/preview-devices";
 
 /**
  * Único Client Component "grande" do Prototype Builder — de propósito: é
@@ -22,16 +24,22 @@ export function PrototypeBuilder({
   prototypeId,
   initialName,
   initialComponents,
+  initialRefinements,
 }: {
   prototypeId: string;
   initialName: string;
   initialComponents: ComponentNode[];
+  initialRefinements: RefinementMessage[];
 }) {
   const [state, dispatch] = useReducer(builderReducer, createInitialState(initialComponents));
   const [name, setName] = useState(initialName);
   const [savedName, setSavedName] = useState(initialName);
   const [isSaving, startSaving] = useTransition();
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Estado local, FORA do reducer do Builder de propósito (Prompt 13):
+  // trocar de dispositivo de preview é puramente de apresentação — nunca
+  // deve marcar `dirty`, empilhar undo/redo, nem afetar a árvore/seleção.
+  const [previewDevice, setPreviewDevice] = useState<PreviewDevice>("desktop");
 
   const dirty = state.dirty || name !== savedName;
 
@@ -74,7 +82,18 @@ export function PrototypeBuilder({
 
   return (
     <div className="-m-4 flex min-h-[80vh] flex-col overflow-hidden rounded-xl border border-border sm:-m-6 lg:-m-8">
-      <Toolbar prototypeId={prototypeId} state={state} dispatch={dispatch} name={name} onNameChange={setName} onSave={handleSave} saving={isSaving} dirty={dirty} />
+      <Toolbar
+        prototypeId={prototypeId}
+        state={state}
+        dispatch={dispatch}
+        name={name}
+        onNameChange={setName}
+        onSave={handleSave}
+        saving={isSaving}
+        dirty={dirty}
+        previewDevice={previewDevice}
+        onPreviewDeviceChange={setPreviewDevice}
+      />
 
       {saveError ? (
         <p role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
@@ -82,7 +101,7 @@ export function PrototypeBuilder({
         </p>
       ) : null}
 
-      <RefinementBar prototypeId={prototypeId} dispatch={dispatch} />
+      <RefinementChat prototypeId={prototypeId} dispatch={dispatch} initialRefinements={initialRefinements} />
 
       <div className="flex flex-1 flex-col lg:flex-row">
         {state.mode === "edit" ? (
@@ -98,8 +117,14 @@ export function PrototypeBuilder({
             </aside>
           </>
         ) : (
-          <div className="min-w-0 flex-1 overflow-y-auto bg-background p-6">
-            <Canvas state={state} dispatch={dispatch} />
+          <div className="min-w-0 flex-1 overflow-auto bg-muted/30 p-6">
+            <div
+              data-testid="preview-device-frame"
+              className="mx-auto rounded-lg border border-border bg-background p-4 shadow-sm"
+              style={{ width: PREVIEW_DEVICE_WIDTH[previewDevice], maxWidth: "100%" }}
+            >
+              <Canvas state={state} dispatch={dispatch} />
+            </div>
           </div>
         )}
       </div>

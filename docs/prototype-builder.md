@@ -152,6 +152,34 @@ adiciona nenhum wrapper. Nunca existe uma segunda implementação da
 interface (seção 8 do Prompt 09: "não crie uma segunda implementação
 independente").
 
+## Preview responsivo (Prompt 13)
+
+O modo preview tem um seletor Desktop/Tablet/Mobile
+(`PreviewDeviceSelector`) que restringe a LARGURA DO CONTAINER que
+envolve o `Canvas` — nunca muda o `Component Tree` nem o schema de
+componentes. Larguras de referência (`lib/prototype/preview-devices.ts`):
+1280px (desktop), 768px (tablet), 375px (mobile) — valores comuns de
+indústria, não um breakpoint do Tailwind deste projeto.
+
+`device` vive como estado local em `PrototypeBuilder` (`useState`), FORA
+de `BuilderState`/`builder-reducer.ts` de propósito: trocar de
+dispositivo é puramente de apresentação — nunca deve marcar `dirty`,
+empilhar undo/redo, nem afetar a árvore ou a seleção atual. Como não
+passa pelo `dispatch`, essa garantia é estrutural (não só testada).
+
+**Gap de schema conhecido, documentado — não resolvido nesta fase sem
+perguntar antes** (Prompt 13, seção 1): `ComponentNode` não tem nenhum
+campo para representar comportamento responsivo REAL — não há como um
+protótipo dizer "esconda este componente em mobile" ou "troque de `row`
+para `column` neste breakpoint". Trocar de dispositivo aqui só estreita o
+container onde a MESMA árvore renderiza; um `row` com muitos itens
+reflui naturalmente por causa do `flex-wrap` já existente (CSS, não uma
+regra por breakpoint), mas nada no protótipo pode ser condicionalmente
+diferente por dispositivo além disso. Adicionar "responsive props" ao
+schema mudaria o contrato usado pela geração por IA (Prompt 11) e pela
+validação existente (`validate_component_tree`/`validate_generated_tree`)
+— fora de escopo desta fase, que é deliberadamente só de apresentação.
+
 ## Estado do Builder — sem biblioteca nova
 
 Um único `useReducer` (`builder-reducer.ts`), sem Zustand/Redux/Jotai —
@@ -227,12 +255,22 @@ usuário, mesmo espírito de `GET /api/crm/pipeline/stages`.
 Geração de código, publicação/deploy, domínio personalizado, colaboração em
 tempo real, marketplace de componentes, sistema de plugins, histórico
 ilimitado, geração de backend/banco de dados pelo usuário, execução de
-código arbitrário, design responsivo visual completo, um editor
-equivalente ao Figma, e drag-and-drop (deliberadamente adiado — a seção 6
-do próprio Prompt 09 permite: "não é obrigatório implementar um editor
-visual extremamente avançado... priorize estabilidade"). Adicionar/
-selecionar/mover/remover funcionam via clique e botões, cobrindo os
-critérios de aceitação sem a complexidade de um sistema de arrastar-e-soltar.
+código arbitrário, um editor equivalente ao Figma, e drag-and-drop
+(deliberadamente adiado — a seção 6 do próprio Prompt 09 permite: "não é
+obrigatório implementar um editor visual extremamente avançado... priorize
+estabilidade"). Adicionar/selecionar/mover/remover funcionam via clique e
+botões, cobrindo os critérios de aceitação sem a complexidade de um
+sistema de arrastar-e-soltar.
+
+**Design responsivo**: um seletor de largura de preview (Desktop/Tablet/
+Mobile) foi adicionado no Prompt 13 — ver "Preview responsivo" acima. Isso
+é puramente visualização (o container do preview fica mais estreito); o
+schema de componentes continua sem NENHUM campo para comportamento
+responsivo real (esconder um componente por breakpoint, mudar layout por
+breakpoint) — "design responsivo visual completo" nesse sentido mais
+profundo continua fora de escopo, deliberadamente, até haver um pedido
+explícito para estender o schema (que afetaria a geração por IA e a
+validação existentes).
 
 ## Testes
 
@@ -248,7 +286,10 @@ o agrupamento do histórico de undo/redo), `component-registry.test.ts`
 segurança: texto malicioso nunca vira HTML, `javascript:`/`data:text/html`
 nunca viram uma imagem real), `canvas.test.tsx`, `property-panel.test.tsx`,
 `component-palette.test.tsx`, `new-prototype-dialog.test.tsx` e
-`prototype-builder.test.tsx` (integração dos componentes menores).
+`prototype-builder.test.tsx` (integração dos componentes menores — inclui,
+desde o Prompt 13, o `describe` "preview responsivo": seletor só aparece
+em modo preview, container reflete a largura do dispositivo escolhido, e
+trocar de dispositivo nunca mexe na árvore/seleção/histórico de undo).
 
 ## Limitações conhecidas
 
