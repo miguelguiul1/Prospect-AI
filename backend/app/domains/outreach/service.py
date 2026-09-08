@@ -157,8 +157,10 @@ class OutreachService:
         return outreach
 
     def _validate_content(self, raw_text: str) -> OutreachContent:
+        from app.core.ai_text import strip_markdown_code_fence
+
         try:
-            payload = json.loads(raw_text)
+            payload = json.loads(strip_markdown_code_fence(raw_text))
         except json.JSONDecodeError as exc:
             raise ProviderInvalidResponseError(f"Resposta do provider não é JSON válido: {exc}") from exc
         try:

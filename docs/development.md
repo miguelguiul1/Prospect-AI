@@ -78,6 +78,19 @@ cp .env.example .env
 # edite .env se necessário — nenhum valor de exemplo é um segredo real
 ```
 
+**Achado real (Prompt 11 — a primeira vez que este comando foi executado
+de verdade nesta sessão, para testar a geração de Prototype contra a
+Anthropic API real)**: um `backend/.env` real com uma `ANTHROPIC_API_KEY`
+de verdade preenchida quebrou silenciosamente vários testes que esperavam
+"nenhuma API key configurada" (`test_*_without_api_key_degrades_gracefully`,
+`test_settings_never_default_a_real_secret`, etc.) — porque nada em
+`tests/conftest.py` isolava a suíte de um `.env` local antes disso. Já
+corrigido: `Settings.model_config` (`app/core/config.py`) pula a leitura
+de qualquer `.env` quando `APP_ENV=test` (sempre definida por
+`conftest.py` antes de qualquer import de `app`), então um `backend/.env`
+real — com uma chave real, para testar contra a API de verdade — nunca
+mais afeta a suíte automatizada, independente do que ele contenha.
+
 ## Rodando com Docker (recomendado quando disponível)
 
 ```bash

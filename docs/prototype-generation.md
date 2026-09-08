@@ -97,13 +97,13 @@ nunca uma URL inventada.
 
 ## Validação do artefato gerado
 
-`app/domains/prototypes/generation/validation.py`, três camadas, a
+`app/domains/prototypes/generation/validation.py`, quatro camadas, a
 primeira falha interrompe as seguintes:
 
 1. **Schema/catálogo** — reaproveita `validate_component_tree`
    (`prototypes/schemas.py`, Fase 6) sem duplicar: catálogo fechado,
    ciclos, `parent_id` pendurado, contagem/profundidade máximas, IDs
-   duplicados.
+   duplicados. Puramente estrutural — nunca olha semântica de `props`.
 2. **Segurança de URL** — props `src`/`href`/`url`/`link` (os únicos
    nomes usados pelo catálogo hoje, mais os dois últimos por precaução,
    já que `props` não é validado por chave) só aceitam
@@ -111,14 +111,80 @@ primeira falha interrompe as seguintes:
    `data:`, `file:`, `vbscript:`. Testado forçando o
    `FakeGenerationProvider` a devolver uma URL `javascript:` — rejeitada
    antes de qualquer persistência.
-3. **Grounding heurístico** (`find_grounding_warnings`) — regex por
+3. **Props obrigatórias por tipo** (`MissingRequiredPropError`, adicionada
+   depois do achado real descrito abaixo) — `text`/`heading`/`button`
+   exigem `props.content` preenchido (string não vazia). Fecha o gap
+   entre "estruturalmente válido" e "renderiza de verdade".
+4. **Grounding heurístico** (`find_grounding_warnings`) — regex por
    telefone/CNPJ/preço no texto gerado, sem correspondência no contexto
    conhecido. Nunca bloqueia — os avisos ficam em
    `GenerationRun.grounding_warnings`, para revisão humana.
 
-Qualquer falha nas camadas 1-2 termina em `GenerationRun.status=FAILED`
+Qualquer falha nas camadas 1-3 termina em `GenerationRun.status=FAILED`
 com o motivo registrado — nunca um protótipo vazio, nunca um retry
 silencioso.
+
+## Validação contra a API real (Prompt 11)
+
+Várias chamadas reais à Anthropic API foram feitas nesta sessão (com
+autorização explícita e uma `ANTHROPIC_API_KEY` real fornecida pelo
+usuário), contra uma empresa com Digital Audit real (HTTP GET real contra
+`https://example.com`) e Sales Brief real. As duas primeiras tentativas
+falharam por saldo insuficiente na conta (custo zero, nenhum token
+processado); depois de crédito adicionado, o pipeline completo (Digital
+Audit → Opportunity Score → Sales Brief → Geração de Protótipo) foi
+rodado do zero mais duas vezes, revelando dois achados reais que nenhum
+teste com `FakeGenerationProvider` jamais teria revelado:
+
+1. **JSON envolvido em markdown**: apesar da instrução explícita "sem
+   markdown", o modelo real ocasionalmente envolve a resposta em
+   ` ```json ... ``` `. Corrigido com `app.core.ai_text.
+   strip_markdown_code_fence` (compartilhado com Sales Brief e Outreach —
+   os três domínios tinham o mesmo gap, nunca testados contra a API real
+   antes desta fase).
+2. **Chave de prop errada**: o modelo usou `props.text` em vez de
+   `props.content` para `heading`/`button` — estruturalmente válido,
+   mas a interface real só lê `content`, então o texto gerado seria
+   silenciosamente descartado (substituído pelo placeholder padrão do
+   Builder). Corrigido em duas camadas: o prompt agora especifica os
+   nomes exatos de prop por tipo (espelhando `COMPONENT_REGISTRY` do
+   frontend), e `MissingRequiredPropError` (camada 3 acima) é a rede de
+   segurança estrutural caso o modelo erre de novo — nunca depende só do
+   prompt "pedir certo". Ver `docs/adr/013-per-component-type-prop-schema.md`
+   para a decisão de escopo (correção mínima agora vs. um schema completo
+   por tipo de componente, adiado até um segundo gap real aparecer).
+
+**Confirmado com uma segunda chamada real, após as duas correções**: a
+geração sucedeu, com `props.content` corretamente preenchido nos
+componentes de texto observados diretamente na resposta (`hero-heading`:
+"Example Domain", `hero-cta`: "Solicitar Auditoria Gratuita",
+`contact-heading`: "Fale Conosco") — nenhum `MissingRequiredPropError`
+levantado, confirmando que a árvore gerada desta vez tinha conteúdo real
+em todo componente de texto (o próprio mecanismo de validação garante
+isso: um `props.content` ausente teria interrompido a geração inteira).
+
+**Custo real das chamadas desta validação**: as duas primeiras tentativas
+falharam por saldo insuficiente na conta, antes de qualquer token ser
+processado — custo zero, confirmado. As tentativas seguintes (a que
+revelou o markdown envolvendo o JSON, e a que revelou a chave de prop
+errada) **tiveram a chamada HTTP concluída com sucesso pelo provider antes
+de falhar no parsing/validação do conteúdo** — ou seja, muito provavelmente
+foram cobradas normalmente, mesmo tendo terminado como `GenerationRun.
+status=FAILED`. Um achado adicional desta mesma validação: até este ponto
+da sessão, `PrototypeGenerationService._fail()` não capturava
+`input_tokens`/`output_tokens`/`duration_ms` nesse tipo de falha (só no
+caminho de sucesso), então o custo real dessas chamadas específicas nunca
+chegou a ficar registrado — uma violação do próprio objetivo de
+rastreamento de custo do F8 ("identificar toda operação que chama IA:
+tokens, custo"). Corrigido nesta mesma sessão: `_fail()` agora recebe e
+persiste `input_tokens`/`output_tokens`/`duration_ms` sempre que a
+resposta do provider chegou a existir, mesmo em falha — mas os valores
+exatos das chamadas que motivaram essa correção não foram recuperados
+retroativamente (o registro já tinha sido persistido sem eles). A
+chamada final de confirmação (depois de ambas as correções), essa sim com
+os números completos capturados: Sales Brief ≈ 968 tokens de entrada /
+910 de saída; Prototype Generation ≈ 1.373 / 2.678 — nenhum
+`grounding_warning`, `GenerationRun.status=SUCCEEDED`.
 
 ## `GenerationRun` + `ContextSnapshot`
 

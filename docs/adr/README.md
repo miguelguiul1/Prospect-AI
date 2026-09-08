@@ -19,6 +19,7 @@ desta fase, não uma migração das anteriores).
 | [010](./010-jwt-key-versioning.md) | Não implementar rotação de `JWT_SECRET_KEY` com múltiplas chaves (`kid`) agora | Aceita (reconsiderar sob gatilho) |
 | [011](./011-rate-limiter-distribuido.md) | Não implementar rate limiter distribuído agora | Aceita (reconsiderar sob gatilho) |
 | [012](./012-no-prototype-version-yet.md) | Não criar `PrototypeVersion` nesta fase (Prompt 11) | Aceita (reconsiderar sob gatilho) |
+| [013](./013-per-component-type-prop-schema.md) | Correção mínima (não schema completo) para o bug real de prop key errada (Prompt 11) | Aceita (reconsiderar sob gatilho) |
 
 ## Formato
 

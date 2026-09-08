@@ -81,6 +81,21 @@ class TestGenerateDraft:
         assert outreach.generated_by_ai is True
         assert outreach.provider == "fake"
 
+    def test_json_wrapped_in_a_markdown_code_fence_is_parsed_anyway(self, db_session: Session) -> None:
+        """Mesmo achado real do Prompt 11 documentado em
+        tests/briefing/test_service.py — o modelo real às vezes envolve o
+        JSON em ```json ... ``` apesar da instrução para não fazer isso."""
+        opportunity, user, _ = _opportunity_with_context(db_session)
+        fenced = "```json\n" + json.dumps(_VALID_CONTENT) + "\n```"
+        provider = _FakeProvider(response_text=fenced)
+
+        outreach = OutreachService(db_session, provider=provider).generate_draft(
+            opportunity, contact=None, channel=OutreachChannel.EMAIL, user_id=user.id
+        )
+
+        assert outreach.status == OutreachStatus.DRAFT
+        assert outreach.subject == _VALID_CONTENT["subject"]
+
     def test_passes_the_dedicated_outreach_max_tokens_not_the_briefing_one(self, db_session: Session) -> None:
         from app.core.config import get_settings
 

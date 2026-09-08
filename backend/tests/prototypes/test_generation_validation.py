@@ -8,6 +8,7 @@ import pytest
 
 from app.domains.prototypes.context import ContextConfidence, ContextField, PrototypeContext
 from app.domains.prototypes.generation.validation import (
+    MissingRequiredPropError,
     UnsafeGeneratedContentError,
     find_grounding_warnings,
     validate_generated_tree,
@@ -147,6 +148,77 @@ class TestUrlSafety:
         )
         with pytest.raises(UnsafeGeneratedContentError):
             validate_generated_tree(tree)
+
+
+class TestRequiredContentProp:
+    """Achado REAL da primeira chamada real à Anthropic API deste
+    projeto: o modelo devolveu uma árvore estruturalmente válida (passou
+    catálogo/ciclos) mas usou `props.text` em vez de `props.content` para
+    heading/button — a interface real só lê `content`, então o texto
+    gerado seria silenciosamente descartado. Esta é a rede de segurança
+    estrutural para esse caso — não depende só do prompt "pedir certo"."""
+
+    def test_heading_with_wrong_prop_key_is_rejected(self) -> None:
+        """A chave errada exata observada na chamada real: `text` em vez
+        de `content`."""
+        tree = [
+            {
+                "id": "h1",
+                "type": "heading",
+                "parent_id": None,
+                "order": 0,
+                "props": {"text": "Bem-vindo"},
+                "styles": {},
+            }
+        ]
+        with pytest.raises(MissingRequiredPropError):
+            validate_generated_tree(tree)
+
+    def test_button_with_empty_props_is_rejected(self) -> None:
+        tree = [
+            {"id": "btn", "type": "button", "parent_id": None, "order": 0, "props": {}, "styles": {}}
+        ]
+        with pytest.raises(MissingRequiredPropError):
+            validate_generated_tree(tree)
+
+    def test_text_with_blank_content_is_rejected(self) -> None:
+        tree = [
+            {
+                "id": "t",
+                "type": "text",
+                "parent_id": None,
+                "order": 0,
+                "props": {"content": "   "},
+                "styles": {},
+            }
+        ]
+        with pytest.raises(MissingRequiredPropError):
+            validate_generated_tree(tree)
+
+    def test_heading_with_correct_content_prop_is_accepted(self) -> None:
+        tree = [
+            {
+                "id": "h1",
+                "type": "heading",
+                "parent_id": None,
+                "order": 0,
+                "props": {"content": "Bem-vindo"},
+                "styles": {},
+            }
+        ]
+        result = validate_generated_tree(tree)
+        assert result[0].props["content"] == "Bem-vindo"
+
+    def test_layout_types_never_require_a_content_prop(self) -> None:
+        """container/section/row/column/card/divider não exibem texto —
+        nunca devem ser exigidos a ter props.content."""
+        tree = [
+            {"id": "root", "type": "container", "parent_id": None, "order": 0, "props": {}, "styles": {}},
+            {"id": "s", "type": "section", "parent_id": "root", "order": 0, "props": {}, "styles": {}},
+            {"id": "d", "type": "divider", "parent_id": "root", "order": 1, "props": {}, "styles": {}},
+        ]
+        result = validate_generated_tree(tree)
+        assert len(result) == 3
 
 
 class TestGroundingHeuristic:

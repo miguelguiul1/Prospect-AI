@@ -160,10 +160,11 @@ class SalesBriefService:
         return brief
 
     def _validate_content(self, raw_text: str) -> SalesBriefContent:
+        from app.core.ai_text import strip_markdown_code_fence
         from app.domains.briefing.providers.errors import ProviderInvalidResponseError
 
         try:
-            payload = json.loads(raw_text)
+            payload = json.loads(strip_markdown_code_fence(raw_text))
         except json.JSONDecodeError as exc:
             raise ProviderInvalidResponseError(f"Resposta do provider não é JSON válido: {exc}") from exc
 

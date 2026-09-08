@@ -106,6 +106,21 @@ class TestSuccessfulGeneration:
         assert brief.output_tokens == 50
         assert brief.error_code is None
 
+    def test_json_wrapped_in_a_markdown_code_fence_is_parsed_anyway(self, db_session: Session) -> None:
+        """Achado real do Prompt 11 (primeira chamada real à Anthropic
+        API deste projeto): apesar da instrução explícita "sem markdown",
+        o modelo real às vezes envolve o JSON em ```json ... ``` mesmo
+        assim. `FakeProvider` nunca revelaria isso sozinho — este teste
+        simula exatamente o formato real observado."""
+        company = _scored_company(db_session)
+        fenced = "```json\n" + json.dumps(_VALID_CONTENT) + "\n```"
+        service = SalesBriefService(db_session, provider=_FakeProvider(response_text=fenced))
+
+        brief = service.generate(company.id)
+
+        assert brief.status == SalesBriefStatus.COMPLETED
+        assert brief.content == _VALID_CONTENT
+
     def test_grounds_prompt_in_actual_context_not_invented_data(self, db_session: Session) -> None:
         company = _scored_company(db_session)
         provider = _FakeProvider()

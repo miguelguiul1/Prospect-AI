@@ -150,6 +150,16 @@ class PrototypeGenerationService:
                 context=context,
                 provider_name=getattr(provider, "name", None),
                 model=response.model,
+                # Achado real (Prompt 11): a chamada HTTP já teve sucesso
+                # e provavelmente já foi cobrada pelo provider quando o
+                # código chega aqui — só o CONTEÚDO falhou depois. Sem
+                # capturar os tokens aqui, uma falha de parsing/validação
+                # custava dinheiro real sem deixar nenhum registro de
+                # quanto, quebrando o objetivo de custo do F8 ("identificar
+                # toda operação que chama IA: tokens, custo").
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                duration_ms=response.duration_ms,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc)[:500],
             )
@@ -196,7 +206,9 @@ class PrototypeGenerationService:
         return self.execute(run)
 
     def _parse_and_validate(self, raw_text: str) -> list:
-        payload = json.loads(raw_text)
+        from app.core.ai_text import strip_markdown_code_fence
+
+        payload = json.loads(strip_markdown_code_fence(raw_text))
         components = payload["components"]
         if not isinstance(components, list):
             raise TypeError("campo 'components' da resposta do provider não é uma lista")
@@ -209,6 +221,9 @@ class PrototypeGenerationService:
         context: PrototypeContext | None = None,
         provider_name: str | None = None,
         model: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        duration_ms: float | None = None,
         error_code: str,
         error_message: str,
     ) -> GenerationRun:
@@ -216,6 +231,14 @@ class PrototypeGenerationService:
         run.provider = provider_name
         run.model = model
         run.context_version = context.context_version if context is not None else "unknown"
+        # `input_tokens`/`output_tokens` só vêm preenchidos quando a
+        # chamada HTTP já teve sucesso e falhou depois (parsing/validação)
+        # — nesse caso o provider já cobrou pela chamada, e perder esse
+        # registro quebraria o rastreamento de custo real de IA (achado do
+        # Prompt 11, ver docstring de onde este método é chamado).
+        run.input_tokens = input_tokens
+        run.output_tokens = output_tokens
+        run.duration_ms = duration_ms
         run.error_code = error_code
         run.error_message = error_message
         run.completed_at = _now()
@@ -236,6 +259,10 @@ class PrototypeGenerationService:
             error_code=error_code,
         )
         metrics.increment("ai_requests_total", {"domain": _METRIC_DOMAIN, "status": "failed"})
+        if input_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": _METRIC_DOMAIN, "direction": "input"}, input_tokens)
+        if output_tokens is not None:
+            metrics.increment("ai_tokens_total", {"domain": _METRIC_DOMAIN, "direction": "output"}, output_tokens)
         return run
 
     def get(self, prototype_id: uuid.UUID, generation_id: uuid.UUID) -> GenerationRun | None:

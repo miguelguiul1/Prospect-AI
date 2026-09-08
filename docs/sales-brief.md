@@ -146,6 +146,17 @@ chamada de IA já é cara e lenta o suficiente; um erro vira `FAILED`
 imediato, nunca um retry silencioso que poderia mascarar instabilidade do
 provider.
 
+**Achado real (Prompt 11 — primeira chamada real à Anthropic API deste
+projeto)**: apesar da instrução "responda apenas com JSON, sem markdown"
+no prompt, o modelo real por vezes envolve a resposta em um bloco de
+código Markdown (` ```json ... ``` `) mesmo assim — `json.loads` falharia
+com `ProviderInvalidResponseError` sem tratamento. `app.core.ai_text.
+strip_markdown_code_fence` (compartilhado com Outreach e a geração de
+Prototype) remove esse envoltório antes de parsear, quando presente,
+tolerando o comportamento real do provider sem depender só da instrução
+do prompt. Testado em
+`tests/briefing/test_service.py::test_json_wrapped_in_a_markdown_code_fence_is_parsed_anyway`.
+
 ## Custos/uso: nunca inventados
 
 `duration_ms`, `input_tokens` e `output_tokens` só são persistidos quando o

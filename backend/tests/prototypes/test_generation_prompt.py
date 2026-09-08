@@ -51,6 +51,15 @@ class TestPromptStructure:
         assert "JSON" in prompt["system"]
         assert "HTML" in prompt["system"]
 
+    def test_system_prompt_specifies_content_as_the_required_prop_for_text_bearing_types(self) -> None:
+        """Achado real da primeira chamada real à Anthropic API: o modelo
+        usou `props.text` em vez de `props.content`. O prompt agora
+        especifica isso explicitamente — reforço em camadas junto da
+        validação estrutural (`MissingRequiredPropError`)."""
+        prompt = build_prompt(_minimal_context())
+        assert "props.content" in prompt["system"]
+        assert "props.text" in prompt["system"]  # citado explicitamente como o erro a evitar
+
     def test_user_prompt_wraps_data_in_delimiters(self) -> None:
         prompt = build_prompt(_minimal_context())
         assert _DATA_OPEN in prompt["user"]

@@ -6,6 +6,7 @@ para a lista completa de variáveis suportadas.
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -14,9 +15,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Nunca lê um `.env` local durante a suíte de testes (achado real
+        # do Prompt 11): `env_ignore_empty=True` só faz uma variável VAZIA
+        # ser ignorada COMO FONTE, caindo para a PRÓXIMA fonte na ordem de
+        # prioridade (o próprio arquivo `.env`) — nunca "força None" por si
+        # só. Isso significa que nada em `tests/conftest.py` conseguiria
+        # isolar a suíte de um `ANTHROPIC_API_KEY` real presente num
+        # `.env` local só setando a variável de ambiente como vazia — a
+        # única forma robusta é não ler o arquivo `.env` durante os testes
+        # de jeito nenhum. `conftest.py` sempre define `APP_ENV=test`
+        # ANTES de qualquer `import app...` (ver seu próprio docstring),
+        # o que já acontece antes desta classe ser definida.
+        env_file=None if os.environ.get("APP_ENV") == "test" else ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # `.env.example` documenta "deixe em branco" para todo campo
+        # opcional (API keys, DISCOVERY_COST_PER_REQUEST) — sem isto, uma
+        # variável presente mas vazia (`ANTHROPIC_API_KEY=`) vira a string
+        # vazia `""`, não `None`, e um campo `float | None` sequer
+        # analisa (achado real do Prompt 11, ao copiar `.env.example` para
+        # um `.env` de verdade pela primeira vez neste projeto).
+        env_ignore_empty=True,
     )
 
     app_env: Literal["development", "test", "production"] = "development"

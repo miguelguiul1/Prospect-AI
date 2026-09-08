@@ -31,6 +31,19 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ["REDIS_URL"] = "redis://localhost:6399/0"  # porta sem serviço: ver test_health.py
 os.environ["APP_ENV"] = "test"
 
+# `APP_ENV=test`, definida acima, é o que faz `Settings.model_config`
+# (app/core/config.py) pular a leitura de um `.env` local por completo —
+# única forma robusta de garantir que credenciais externas opcionais
+# (ANTHROPIC_API_KEY, etc.) fiquem `None` na suíte, independente do que um
+# `.env` real da máquina do desenvolvedor contenha. Achado real do
+# Prompt 11: criar um `backend/.env` com uma `ANTHROPIC_API_KEY` real (para
+# testar a geração de Prototype contra a API real) quebrou silenciosamente
+# vários testes de "degrada graciosamente sem API key" nesta mesma sessão
+# — setar a variável de ambiente como vazia sozinho NÃO bastava
+# (`env_ignore_empty=True` só cai para a próxima fonte, o próprio `.env`,
+# não força `None`).
+assert os.environ.get("APP_ENV") == "test"
+
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

@@ -99,6 +99,24 @@ class TestSuccessfulGeneration:
         assert len(run.grounding_warnings) == 1
 
 
+class TestMarkdownFenceTolerance:
+    def test_json_wrapped_in_a_markdown_code_fence_is_parsed_anyway(self, db_session: Session) -> None:
+        """Achado real do Prompt 11 (primeira chamada real à Anthropic
+        API deste projeto): apesar da instrução explícita "sem markdown",
+        o modelo real envolveu o JSON em ```json ... ``` mesmo assim.
+        `FakeGenerationProvider` nunca revelaria isso sozinho — este teste
+        simula exatamente o formato real observado."""
+        company = _company_with_evidence(db_session)
+        prototype = _prototype(db_session, company)
+        fenced = "```json\n" + json.dumps({"components": DEFAULT_COMPONENT_TREE}) + "\n```"
+        provider = FakeGenerationProvider(response_text=fenced)
+
+        run = PrototypeGenerationService(db_session, provider=provider).generate(prototype)
+
+        assert run.status == GenerationStatus.SUCCEEDED
+        assert len(prototype.components) == len(DEFAULT_COMPONENT_TREE)
+
+
 class TestGenerationFailures:
     def test_malformed_json_never_updates_the_prototype(self, db_session: Session) -> None:
         company = _company_with_evidence(db_session)
@@ -161,6 +179,36 @@ class TestGenerationFailures:
 
         assert run.status == GenerationStatus.FAILED
         assert run.error_code == "UnsafeGeneratedContentError"
+        assert prototype.components == []
+
+    def test_wrong_prop_key_from_a_real_observed_provider_mistake_fails_and_never_persists(
+        self, db_session: Session
+    ) -> None:
+        """Achado REAL da primeira chamada real à Anthropic API deste
+        projeto (não um caso hipotético): o modelo usou `props.text` em
+        vez de `props.content` para heading/button. Prova de ponta a
+        ponta (não só a camada de validação isolada, já coberta em
+        `test_generation_validation.py`) de que o service inteiro trata
+        isso como uma falha real, nunca persiste um protótipo com texto
+        silenciosamente descartado."""
+        company = _company_with_evidence(db_session)
+        prototype = _prototype(db_session, company)
+        tree = [
+            {
+                "id": "h1",
+                "type": "heading",
+                "parent_id": None,
+                "order": 0,
+                "props": {"text": "Bem-vindo"},  # errado: deveria ser "content"
+                "styles": {},
+            }
+        ]
+        provider = FakeGenerationProvider(component_tree=tree)
+
+        run = PrototypeGenerationService(db_session, provider=provider).generate(prototype)
+
+        assert run.status == GenerationStatus.FAILED
+        assert run.error_code == "MissingRequiredPropError"
         assert prototype.components == []
 
     def test_insufficient_context_fails_before_calling_the_provider(self, db_session: Session) -> None:
