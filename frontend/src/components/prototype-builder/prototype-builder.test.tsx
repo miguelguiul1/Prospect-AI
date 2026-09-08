@@ -9,6 +9,11 @@ const savePrototypeAction = vi.fn(async (_id: string, _input: { name: string; co
 
 vi.mock("@/app/prototypes/[prototypeId]/actions", () => ({
   savePrototypeAction: (id: string, input: { name: string; components: unknown[] }) => savePrototypeAction(id, input),
+  // Nenhum teste aqui aciona o refinamento (ver refinement-bar.test.tsx
+  // para isso isoladamente) — só evita um import undefined quando
+  // `RefinementBar` (renderizado dentro de `PrototypeBuilder`) resolve o
+  // módulo mockado.
+  refinePrototypeAction: vi.fn(),
 }));
 
 const { PrototypeBuilder } = await import("@/components/prototype-builder/prototype-builder");

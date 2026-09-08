@@ -29,6 +29,32 @@ protótipo vazio nem um `GenerationRun` inventado — sempre um
 automático (mesma decisão do Sales Brief, pelo mesmo motivo: uma
 chamada de IA já é cara o suficiente; um retry de job inteiro poderia
 duplicar o custo sem necessidade).
+
+**Refinamento por linguagem natural (Prompt 12)**: `start()`/`execute()`
+agora servem os dois casos — geração inicial (`instruction=None`) e
+refinamento (`instruction` preenchido) — com o MESMO pipeline de
+validação (`validate_generated_tree`/`find_grounding_warnings`, camada
+única, nunca duplicada) e o mesmo tratamento de falha. A única diferença
+real está em `execute()`: qual função de `generation.prompt` monta o
+prompt, e se uma `PrototypeVersion` resultante grava `diff_summary`
+(só para refinamento — geração inicial não tem "antes" para comparar).
+
+**Reaproveitar ou renovar o contexto no refinamento?** Decisão: SEMPRE
+renovar (`PrototypeContextBuilder(self._db).build(...)` roda de novo, sem
+nenhum atalho para reaproveitar o `ContextSnapshot` de uma geração
+anterior) — mesmo caminho de código da geração inicial, sem nenhum `if`
+extra. Isso diverge da expectativa original da auditoria (seção 25,
+citada no Prompt 12: "a expectativa é reaproveitar o contexto existente
+[...] para evitar regenerar tudo do zero"), e a divergência é
+deliberada: `PrototypeContextBuilder.build()` é uma consulta ao PRÓPRIO
+banco (Company/Evidence/AuditSnapshot/OpportunityScore/SalesBrief) — zero
+custo de IA, zero chamada de rede paga. O único custo real de um
+refinamento é a chamada ao provider de IA, que acontece de qualquer forma
+independente de reaproveitar ou renovar o contexto. Ou seja: o motivo
+original para "reaproveitar" (economizar) não se aplica aqui — renovar é
+estritamente melhor (contexto sempre atualizado, caso a Evidence tenha
+mudado desde a última geração) pelo mesmo custo. Reaproveitar só faria
+sentido se o Context Builder em si fosse caro, o que nunca foi o caso.
 """
 from __future__ import annotations
 
@@ -44,9 +70,11 @@ from app.core.logging import get_logger
 from app.domains.prototypes.context import InsufficientContextError, PrototypeContext, PrototypeContextBuilder
 from app.domains.prototypes.generation import get_generation_provider
 from app.domains.prototypes.generation.base import GenerationProvider, GenerationProviderError
-from app.domains.prototypes.generation.prompt import PROMPT_VERSION, build_prompt
+from app.domains.prototypes.generation.diffing import summarize_component_diff
+from app.domains.prototypes.generation.prompt import PROMPT_VERSION, build_prompt, build_refinement_prompt
 from app.domains.prototypes.generation.validation import find_grounding_warnings, validate_generated_tree
-from app.domains.prototypes.models import ContextSnapshot, GenerationRun, GenerationStatus, Prototype
+from app.domains.prototypes.models import ContextSnapshot, GenerationRun, GenerationStatus, Prototype, PrototypeVersion
+from app.domains.prototypes.versioning import create_version
 
 logger = get_logger(__name__)
 
@@ -60,6 +88,15 @@ def _now() -> datetime:
 class GenerationInProgressError(ValueError):
     """Já existe uma execução `PENDING` para este `Prototype` (seção 5 do
     Prompt 11 — no máximo uma geração em andamento por vez)."""
+
+
+class NoPreviousVersionError(ValueError):
+    """Refinamento pedido para um `Prototype` que ainda não tem NENHUM
+    `GenerationRun` bem-sucedido (definição da seção 1 do Prompt 12: um
+    refinamento só existe "sobre um Prototype que já tem pelo menos uma
+    geração bem-sucedida"). Nunca cai silenciosamente para uma geração do
+    zero — isso seria surpreendente (o usuário pediu para MUDAR algo que,
+    do ponto de vista dele, já existe)."""
 
 
 class PrototypeGenerationService:
@@ -92,12 +129,44 @@ class PrototypeGenerationService:
                 f"{pending.created_at.isoformat()}) — aguarde ela terminar antes de gerar novamente."
             )
 
-    def start(self, prototype: Prototype) -> GenerationRun:
+    def start(self, prototype: Prototype, *, instruction: str | None = None) -> GenerationRun:
         """Cria o `GenerationRun` em `PENDING` e retorna — nunca chama o
         provider aqui. Rápido e síncrono de propósito: é o que a rota
-        `POST /generate` devolve no corpo da resposta 202."""
+        `POST /generate`/`POST /refine` devolve no corpo da resposta 202.
+
+        `instruction=None` → geração inicial (comportamento inalterado do
+        Prompt 11). `instruction` preenchido → refinamento (Prompt 12):
+        exige que o `Prototype` já tenha pelo menos um `GenerationRun`
+        `SUCCEEDED` (`NoPreviousVersionError` se não), e registra
+        `based_on_version_number` = a versão mais recente NESTE momento,
+        só para auditoria (ver docstring do módulo sobre o que de fato é
+        enviado ao provider)."""
         self.validate_preconditions(prototype)
         assert prototype.company_id is not None  # garantido por PrototypeService.create (Prompt 10)
+
+        based_on_version_number = None
+        if instruction is not None:
+            has_previous_success = (
+                self._db.query(GenerationRun)
+                .filter(
+                    GenerationRun.prototype_id == prototype.id,
+                    GenerationRun.status == GenerationStatus.SUCCEEDED,
+                )
+                .first()
+                is not None
+            )
+            if not has_previous_success:
+                raise NoPreviousVersionError(
+                    f"O protótipo {prototype.id} ainda não tem nenhuma geração bem-sucedida — "
+                    "refinamento exige um protótipo já gerado. Rode POST /generate primeiro."
+                )
+            latest_version = (
+                self._db.query(PrototypeVersion)
+                .filter(PrototypeVersion.prototype_id == prototype.id)
+                .order_by(PrototypeVersion.version_number.desc())
+                .first()
+            )
+            based_on_version_number = latest_version.version_number if latest_version is not None else None
 
         run = GenerationRun(
             prototype_id=prototype.id,
@@ -105,6 +174,8 @@ class PrototypeGenerationService:
             status=GenerationStatus.PENDING,
             prompt_version=PROMPT_VERSION,
             context_version="pending",
+            instruction=instruction,
+            based_on_version_number=based_on_version_number,
         )
         self._db.add(run)
         self._db.flush()
@@ -121,7 +192,18 @@ class PrototypeGenerationService:
         except InsufficientContextError as exc:
             return self._fail(run, error_code=exc.__class__.__name__, error_message=str(exc)[:500])
 
-        prompt = build_prompt(context)
+        # Tree "antes", capturada ANTES de qualquer chamada ao provider —
+        # é o que `find`/`diffing` comparam contra o resultado, e é sempre
+        # `Prototype.components` (nunca o `components` da última
+        # `PrototypeVersion` — ver docstring do módulo e de
+        # `PrototypeVersion` sobre por que isso importa).
+        components_before = prototype.components
+        is_refinement = run.instruction is not None
+        prompt = (
+            build_refinement_prompt(context, current_components=components_before, instruction=run.instruction)
+            if is_refinement
+            else build_prompt(context)
+        )
         provider = self._provider or get_generation_provider(self._settings)
 
         try:
@@ -165,6 +247,7 @@ class PrototypeGenerationService:
             )
 
         warnings = find_grounding_warnings(validated, context)
+        components_after = [node.model_dump() for node in validated]
 
         run.status = GenerationStatus.SUCCEEDED
         run.provider = getattr(provider, "name", None)
@@ -174,11 +257,14 @@ class PrototypeGenerationService:
         run.output_tokens = response.output_tokens
         run.duration_ms = response.duration_ms
         run.grounding_warnings = warnings or None
+        # Só para refinamento — a geração inicial não tem "antes" real
+        # para comparar (a árvore anterior estaria sempre vazia, e um
+        # diff contra vazio não mede nada útil).
+        run.diff_summary = summarize_component_diff(components_before, components_after) if is_refinement else None
         run.completed_at = _now()
         self._db.add(ContextSnapshot(generation_run_id=run.id, context=context.to_dict()))
 
-        prototype.components = [node.model_dump() for node in validated]
-        self._db.flush()
+        create_version(self._db, prototype, components=components_after, generation_run_id=run.id)
 
         logger.info(
             "prototype_generation_succeeded",
@@ -197,12 +283,14 @@ class PrototypeGenerationService:
             metrics.increment("ai_tokens_total", {"domain": _METRIC_DOMAIN, "direction": "output"}, run.output_tokens)
         return run
 
-    def generate(self, prototype: Prototype) -> GenerationRun:
+    def generate(self, prototype: Prototype, *, instruction: str | None = None) -> GenerationRun:
         """Atalho síncrono: `start()` + `execute()` em sequência — usado
         pelo fallback sem Redis e por toda a suíte de testes desta fase
         (o provider fake responde instantaneamente, então não há
-        diferença observável entre isto e o caminho enfileirado real)."""
-        run = self.start(prototype)
+        diferença observável entre isto e o caminho enfileirado real).
+        `instruction` repassado direto para `start()` — ver lá para a
+        distinção geração inicial vs. refinamento."""
+        run = self.start(prototype, instruction=instruction)
         return self.execute(run)
 
     def _parse_and_validate(self, raw_text: str) -> list:
@@ -273,4 +361,4 @@ class PrototypeGenerationService:
         )
 
 
-__all__ = ["PrototypeGenerationService", "GenerationInProgressError"]
+__all__ = ["PrototypeGenerationService", "GenerationInProgressError", "NoPreviousVersionError"]

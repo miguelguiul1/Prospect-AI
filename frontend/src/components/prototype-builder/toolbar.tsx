@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Undo2, Redo2, Eye, Pencil, Loader2, Check } from "lucide-react";
+import { ArrowLeft, Undo2, Redo2, Eye, Pencil, Loader2, Check, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { BuilderAction, BuilderState } from "@/components/prototype-builder/builder-reducer";
 
 export function Toolbar({
+  prototypeId,
   state,
   dispatch,
   name,
@@ -15,6 +16,7 @@ export function Toolbar({
   saving,
   dirty,
 }: {
+  prototypeId: string;
   state: BuilderState;
   dispatch: (action: BuilderAction) => void;
   name: string;
@@ -47,6 +49,15 @@ export function Toolbar({
 
       <div className="ml-auto flex items-center gap-2">
         {dirty && !saving ? <span className="text-xs text-muted-foreground">Alterações não salvas</span> : null}
+
+        <Button
+          size="sm"
+          variant="outline"
+          render={<Link href={`/prototypes/${prototypeId}/versions`} />}
+        >
+          <History className="size-4" />
+          Versões
+        </Button>
 
         <Button
           size="sm"

@@ -27,6 +27,7 @@ describe("Toolbar", () => {
     const onNameChange = vi.fn();
     render(
       <Toolbar
+        prototypeId="proto-1"
         state={baseState()}
         dispatch={vi.fn()}
         name="Original"
@@ -45,12 +46,13 @@ describe("Toolbar", () => {
   it("undo button is disabled with no history and dispatches UNDO when enabled", async () => {
     const dispatch = vi.fn();
     const { rerender } = render(
-      <Toolbar state={baseState()} dispatch={dispatch} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
+      <Toolbar prototypeId="proto-1" state={baseState()} dispatch={dispatch} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
     );
     expect(screen.getByRole("button", { name: "Desfazer" })).toBeDisabled();
 
     rerender(
       <Toolbar
+        prototypeId="proto-1"
         state={baseState({ past: [[]] })}
         dispatch={dispatch}
         name="X"
@@ -71,6 +73,7 @@ describe("Toolbar", () => {
     const dispatch = vi.fn();
     render(
       <Toolbar
+        prototypeId="proto-1"
         state={baseState({ future: [[]] })}
         dispatch={dispatch}
         name="X"
@@ -89,18 +92,18 @@ describe("Toolbar", () => {
 
   it("save button reflects the dirty/saving combination", () => {
     const { rerender } = render(
-      <Toolbar state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
+      <Toolbar prototypeId="proto-1" state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
     );
     expect(screen.getByRole("button", { name: /^salvar$/i })).toBeDisabled();
 
     rerender(
-      <Toolbar state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={true} />
+      <Toolbar prototypeId="proto-1" state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={true} />
     );
     expect(screen.getByRole("button", { name: /^salvar$/i })).toBeEnabled();
     expect(screen.getByText("Alterações não salvas")).toBeInTheDocument();
 
     rerender(
-      <Toolbar state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={true} dirty={true} />
+      <Toolbar prototypeId="proto-1" state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={true} dirty={true} />
     );
     expect(screen.getByText("Salvando…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /salvando/i })).toBeDisabled();
@@ -109,7 +112,7 @@ describe("Toolbar", () => {
   it("clicking save calls onSave", async () => {
     const onSave = vi.fn();
     render(
-      <Toolbar state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={onSave} saving={false} dirty={true} />
+      <Toolbar prototypeId="proto-1" state={baseState()} dispatch={vi.fn()} name="X" onNameChange={vi.fn()} onSave={onSave} saving={false} dirty={true} />
     );
 
     await userEvent.click(screen.getByRole("button", { name: /^salvar$/i }));
@@ -119,7 +122,7 @@ describe("Toolbar", () => {
   it("toggling mode dispatches SET_MODE with the opposite mode", async () => {
     const dispatch = vi.fn();
     render(
-      <Toolbar state={baseState({ mode: "edit" })} dispatch={dispatch} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
+      <Toolbar prototypeId="proto-1" state={baseState({ mode: "edit" })} dispatch={dispatch} name="X" onNameChange={vi.fn()} onSave={vi.fn()} saving={false} dirty={false} />
     );
 
     await userEvent.click(screen.getByRole("button", { name: /preview/i }));

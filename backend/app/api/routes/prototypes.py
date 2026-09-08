@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -24,9 +24,13 @@ from app.db.session import get_db
 from app.domains.auth.dependencies import get_current_user
 from app.domains.auth.models import User
 from app.domains.prototypes.authorization import get_accessible_prototype_or_404
-from app.domains.prototypes.generation.service import GenerationInProgressError, PrototypeGenerationService
+from app.domains.prototypes.generation.service import (
+    GenerationInProgressError,
+    NoPreviousVersionError,
+    PrototypeGenerationService,
+)
 from app.domains.prototypes.jobs import enqueue_or_run_prototype_generation
-from app.domains.prototypes.models import GenerationRun, GenerationStatus
+from app.domains.prototypes.models import GenerationRun, GenerationStatus, PrototypeVersion
 from app.domains.prototypes.schemas import (
     COMPONENT_CATEGORIES,
     COMPONENT_TYPES,
@@ -34,8 +38,30 @@ from app.domains.prototypes.schemas import (
     PrototypeUpdateRequest,
 )
 from app.domains.prototypes.service import PrototypeService
+from app.domains.prototypes.versioning import PrototypeVersionService
 
 router = APIRouter(prefix="/api/prototypes", tags=["prototypes"])
+
+_VERSION_DESCRIPTION_MAX_LENGTH = 140
+
+
+def _version_description(version: PrototypeVersion) -> str:
+    """Descrição curta para exibição na lista de versões (seção 6 do
+    Prompt 12) — nunca armazenada, sempre derivada na hora a partir de
+    qual dos três caminhos criou esta versão (ver docstring de
+    `PrototypeVersion`): restauração, geração/refinamento por IA, ou
+    edição manual (só possível quando nem `restored_from_version_number`
+    nem `generation_run_id` estão preenchidos)."""
+    if version.restored_from_version_number is not None:
+        return f"Restaurado da versão {version.restored_from_version_number}"
+    if version.generation_run is not None and version.generation_run.instruction:
+        text = version.generation_run.instruction.strip()
+        if len(text) > _VERSION_DESCRIPTION_MAX_LENGTH:
+            text = text[: _VERSION_DESCRIPTION_MAX_LENGTH - 1] + "…"
+        return text
+    if version.generation_run is not None:
+        return "Geração inicial por IA"
+    return "Editado manualmente no Builder"
 
 
 class PrototypeResponse(BaseModel):
@@ -86,9 +112,59 @@ class GenerationRunResponse(BaseModel):
     error_code: str | None
     error_message: str | None
     grounding_warnings: list[str] | None
+    # Três campos novos do Prompt 12 — `None` para uma geração inicial,
+    # preenchidos só para um refinamento (ver `GenerationRun` em
+    # `app.domains.prototypes.models`).
+    instruction: str | None
+    based_on_version_number: int | None
+    diff_summary: dict | None
     created_at: datetime
     completed_at: datetime | None
     execution_mode: str | None = None
+
+
+class RefineRequest(BaseModel):
+    instruction: str = Field(..., min_length=1, max_length=4000)
+
+
+class PrototypeVersionListItemResponse(BaseModel):
+    id: uuid.UUID
+    version_number: int
+    component_count: int
+    description: str
+    created_at: datetime
+
+
+class PrototypeVersionDetailResponse(BaseModel):
+    id: uuid.UUID
+    version_number: int
+    components: list[dict]
+    description: str
+    instruction: str | None
+    restored_from_version_number: int | None
+    created_at: datetime
+
+
+def _version_to_list_item(version: PrototypeVersion) -> PrototypeVersionListItemResponse:
+    return PrototypeVersionListItemResponse(
+        id=version.id,
+        version_number=version.version_number,
+        component_count=len(version.components),
+        description=_version_description(version),
+        created_at=version.created_at,
+    )
+
+
+def _version_to_detail(version: PrototypeVersion) -> PrototypeVersionDetailResponse:
+    return PrototypeVersionDetailResponse(
+        id=version.id,
+        version_number=version.version_number,
+        components=version.components,
+        description=_version_description(version),
+        instruction=version.generation_run.instruction if version.generation_run is not None else None,
+        restored_from_version_number=version.restored_from_version_number,
+        created_at=version.created_at,
+    )
 
 
 def _generation_to_response(run: GenerationRun, *, execution_mode: str | None = None) -> GenerationRunResponse:
@@ -104,6 +180,9 @@ def _generation_to_response(run: GenerationRun, *, execution_mode: str | None = 
         input_tokens=run.input_tokens,
         output_tokens=run.output_tokens,
         duration_ms=run.duration_ms,
+        instruction=run.instruction,
+        based_on_version_number=run.based_on_version_number,
+        diff_summary=run.diff_summary,
         error_code=run.error_code,
         error_message=run.error_message,
         grounding_warnings=run.grounding_warnings,
@@ -244,6 +323,21 @@ def delete_prototype(
     db.commit()
 
 
+def _check_prototype_generation_rate_limit(prototype_id: uuid.UUID, settings: Settings) -> bool:
+    """Mesma chave para `/generate` e `/refine` (Prompt 12, seção 5: um
+    refinamento também é uma chamada de IA, então conta para o mesmo
+    limite diário — nunca um balde separado que permitiria dobrar o custo
+    máximo por dia só chamando os dois endpoints). Extraído para cá para
+    que os dois pontos de chamada nunca possam divergir na formatação da
+    chave por acidente."""
+    return check_and_increment(
+        f"ratelimit:prototype_generation:{prototype_id}:{datetime.now(timezone.utc).date().isoformat()}",
+        max_attempts=settings.prototype_generation_rate_limit_max_per_day,
+        window_seconds=24 * 60 * 60,
+        on_unavailable="fail_closed",
+    )
+
+
 @router.post(
     "/{prototype_id}/generate", response_model=GenerationRunResponse, status_code=status.HTTP_202_ACCEPTED
 )
@@ -259,15 +353,12 @@ def generate_prototype(
     `prototype_id` (seção 6 do Prompt 11 — nunca por usuário/empresa aqui,
     porque o limite é especificamente "evitar um loop de regeneração
     acidental NESTE protótipo"), política `fail_closed` (mesmo motivo de
-    Sales Brief/Outreach: custo financeiro direto)."""
+    Sales Brief/Outreach: custo financeiro direto). Refinamentos (`POST
+    /refine`, Prompt 12) contam para o MESMO balde diário — ver
+    `_check_prototype_generation_rate_limit` abaixo."""
     prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
 
-    allowed = check_and_increment(
-        f"ratelimit:prototype_generation:{prototype_id}:{datetime.now(timezone.utc).date().isoformat()}",
-        max_attempts=settings.prototype_generation_rate_limit_max_per_day,
-        window_seconds=24 * 60 * 60,
-        on_unavailable="fail_closed",
-    )
+    allowed = _check_prototype_generation_rate_limit(prototype_id, settings)
     if not allowed:
         raise AppError(
             "Limite diário de gerações atingido para este protótipo.",
@@ -305,3 +396,113 @@ def get_generation(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return _generation_to_response(run)
+
+
+@router.post(
+    "/{prototype_id}/refine", response_model=GenerationRunResponse, status_code=status.HTTP_202_ACCEPTED
+)
+def refine_prototype(
+    prototype_id: uuid.UUID,
+    payload: RefineRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> GenerationRunResponse:
+    """Refinamento por linguagem natural (Fase 9 / Prompt 12) — mesmo
+    contrato de resposta e mesmo pipeline de `POST /generate` (mesma
+    validação, mesmo tratamento de falha), só o prompt e o
+    `GenerationRun.instruction` diferem. Mesma autorização, mesmo rate
+    limit COMPARTILHADO (`_check_prototype_generation_rate_limit`), e
+    mesmo limite de "uma geração em andamento por vez" (`start()` levanta
+    `GenerationInProgressError` para os dois fluxos igualmente)."""
+    prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
+
+    allowed = _check_prototype_generation_rate_limit(prototype_id, settings)
+    if not allowed:
+        raise AppError(
+            "Limite diário de gerações atingido para este protótipo.",
+            code="prototype_generation_rate_limited",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    service = PrototypeGenerationService(db)
+    try:
+        run = service.start(prototype, instruction=payload.instruction)
+    except GenerationInProgressError as exc:
+        raise AppError(str(exc), code="generation_in_progress", status_code=status.HTTP_409_CONFLICT) from exc
+    except NoPreviousVersionError as exc:
+        raise AppError(str(exc), code="no_previous_version", status_code=status.HTTP_409_CONFLICT) from exc
+
+    execution_mode = enqueue_or_run_prototype_generation(run.id, db=db)
+    db.commit()
+    db.refresh(run)
+
+    return _generation_to_response(run, execution_mode=execution_mode)
+
+
+@router.get("/{prototype_id}/versions", response_model=list[PrototypeVersionListItemResponse])
+def list_prototype_versions(
+    prototype_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[PrototypeVersionListItemResponse]:
+    """Histórico de versões, mais recente primeiro (Prompt 12, seção 4) —
+    inclui geração inicial, refinamentos e restaurações; NÃO inclui
+    edições manuais via `PUT` (ver docstring de `PrototypeVersion`)."""
+    get_accessible_prototype_or_404(db, prototype_id, current_user)
+    versions = PrototypeVersionService(db).list_for_prototype(prototype_id)
+    return [_version_to_list_item(v) for v in versions]
+
+
+@router.get("/{prototype_id}/versions/{version_id}", response_model=PrototypeVersionDetailResponse)
+def get_prototype_version(
+    prototype_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PrototypeVersionDetailResponse:
+    get_accessible_prototype_or_404(db, prototype_id, current_user)
+    version = PrototypeVersionService(db).get(prototype_id, version_id)
+    if version is None:
+        raise AppError(
+            f"Versão {version_id} não encontrada para o protótipo {prototype_id}.",
+            code="prototype_version_not_found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return _version_to_detail(version)
+
+
+@router.post("/{prototype_id}/versions/{version_id}/restore", response_model=PrototypeVersionDetailResponse)
+def restore_prototype_version(
+    prototype_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PrototypeVersionDetailResponse:
+    """Restaura uma versão antiga criando uma versão NOVA idêntica a ela
+    (Prompt 12, seção 4 — preferido a um mecanismo de rollback dedicado:
+    mais simples, e consistente com o histórico sempre linear/nunca
+    sobrescrito do resto do projeto). Nunca chama IA — sem custo, sem
+    rate limit. Bloqueado enquanto uma geração está `PENDING` (mesmo
+    motivo de `/generate`/`/refine`: evitar uma corrida entre a geração
+    terminando e a restauração, que faria uma sobrescrever a outra de
+    forma imprevisível)."""
+    prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
+    version_service = PrototypeVersionService(db)
+    version = version_service.get(prototype_id, version_id)
+    if version is None:
+        raise AppError(
+            f"Versão {version_id} não encontrada para o protótipo {prototype_id}.",
+            code="prototype_version_not_found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        PrototypeGenerationService(db).validate_preconditions(prototype)
+    except GenerationInProgressError as exc:
+        raise AppError(str(exc), code="generation_in_progress", status_code=status.HTTP_409_CONFLICT) from exc
+
+    restored = version_service.restore(prototype, version)
+    db.commit()
+    db.refresh(restored)
+    return _version_to_detail(restored)

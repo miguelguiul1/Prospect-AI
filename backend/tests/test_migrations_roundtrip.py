@@ -86,16 +86,17 @@ def test_full_downgrade_to_base_then_upgrade_head_round_trips_cleanly() -> None:
 def test_downgrading_one_step_from_head_reverts_only_the_last_migration() -> None:
     """Rollback parcial (o caso real de operação: reverter só a última
     migration aplicada, não o banco inteiro) — prova que a migration mais
-    recente (`0012_prototype_generation`, Prompt 11) reverte isoladamente,
-    sem afetar tabelas de migrations anteriores.
+    recente (`0013_prototype_versioning`, Prompt 12) reverte isoladamente,
+    sem afetar tabelas/colunas de migrations anteriores.
 
     Deliberadamente não hardcoda qual é "a última migration" por nome além
-    de checar seu efeito específico (as duas tabelas novas) — quando uma
-    migration nova for adicionada no futuro, este teste deve ser atualizado
-    para refletir o novo efeito esperado de "um passo atrás do head", assim
-    como já aconteceu duas vezes (a versão original checava
-    `0010_crm_outreach`; a seguinte checava `0011_prototype_company_link`;
-    nenhuma delas é mais o head)."""
+    de checar seu efeito específico (a tabela nova + as três colunas
+    novas) — quando uma migration nova for adicionada no futuro, este
+    teste deve ser atualizado para refletir o novo efeito esperado de "um
+    passo atrás do head", assim como já aconteceu três vezes (a versão
+    original checava `0010_crm_outreach`; depois `0011_prototype_company_
+    link`; depois `0012_prototype_generation`; nenhuma delas é mais o
+    head)."""
     db_path = Path(tempfile.gettempdir()) / f"prospect_ai_migration_partial_{uuid.uuid4().hex}.db"
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
@@ -105,16 +106,19 @@ def test_downgrading_one_step_from_head_reverts_only_the_last_migration() -> Non
         engine.dispose()
 
         tables = set(inspect(engine).get_table_names())
-        assert "prototype_generation_runs" not in tables
-        assert "prototype_context_snapshots" not in tables
+        assert "prototype_versions" not in tables
         # Tabelas de migrations anteriores continuam intactas.
+        assert "prototype_generation_runs" in tables
+        assert "prototype_context_snapshots" in tables
         assert "prototypes" in tables
         assert "opportunities" in tables
         assert "outreach_messages" in tables
         assert "activities" in tables
         assert "contacts" in tables
-        columns = {c["name"] for c in inspect(engine).get_columns("prototypes")}
-        assert "company_id" in columns
+        columns = {c["name"] for c in inspect(engine).get_columns("prototype_generation_runs")}
+        assert "instruction" not in columns
+        assert "based_on_version_number" not in columns
+        assert "diff_summary" not in columns
     finally:
         engine.dispose()
         if db_path.exists():

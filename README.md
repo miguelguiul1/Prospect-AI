@@ -1,16 +1,16 @@
 # Prospect AI
 
-> **Pós-Fase 9 (+ Prompts 10 e 11).** Este README descreve o estado real
-> do projeto nesta fase. Discovery, Identity Resolution, Digital Audit,
-> Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder,
+> **Pós-Fase 9 (+ Prompts 10, 11 e 12).** Este README descreve o estado
+> real do projeto nesta fase. Discovery, Identity Resolution, Digital
+> Audit, Opportunity Score, Sales Brief, o Dashboard, o Prototype Builder,
 > Autenticação + CRM (pipeline, contatos, timeline) + Assisted Outreach, o
 > hardening de produção da Fase 8 (CI/CD, worker RQ real, observabilidade,
-> segurança), e agora a geração de protótipo por IA (Fase 9 — Context
-> Builder + Generation Engine, uma única chamada, catálogo fechado de
-> componentes) estão implementados; refinamento por linguagem natural e
-> versionamento ainda não (é a próxima fase — ver "Próxima fase" abaixo).
-> Ver `docs/crm.md`, `docs/production-readiness.md` e
-> `docs/prototype-generation.md`.
+> segurança), a geração de protótipo por IA (Fase 9 — Context Builder +
+> Generation Engine, uma única chamada, catálogo fechado de componentes),
+> e agora refinamento por linguagem natural + versionamento
+> (`PrototypeVersion`, histórico linear) estão implementados. Ver
+> `docs/crm.md`, `docs/production-readiness.md`,
+> `docs/prototype-generation.md` e `docs/prototype-refinement.md`.
 
 ## O que é
 
@@ -63,6 +63,10 @@ ADRs, auditoria de cobertura).
 - `docs/prototype-generation.md` — Fase 9: Context Builder (classificação
   FACT/SIGNAL/UNKNOWN/INFERENCE), Generation Engine, validação do
   artefato gerado, `GenerationRun`/`ContextSnapshot`, API, cost control.
+- `docs/prototype-refinement.md` — Prompt 12: refinamento por linguagem
+  natural, `PrototypeVersion` (histórico linear), grounding sob pedido do
+  usuário, medição aproximada de mudança mínima, API, cost control
+  compartilhado com a geração.
 - `docs/adr/` — Architecture Decision Records a partir do Prompt 10
   (decisões anteriores continuam citadas em texto corrido em `docs/crm.md`).
 - `docs/development.md` — como rodar, testar e migrar backend e frontend.
@@ -458,20 +462,22 @@ real e opcional da Fase 1, ignorado por padrão. **Frontend: 131 testes**
 segurança do renderer, canvas, painel de propriedades, paleta, diálogo de
 criação, integração). Ver `docs/prototype-builder.md`, seção "Testes".
 
-## Fase 7, Fase 8 e Fase 9 (+ Prompts 10 e 11)
+## Fase 7, Fase 8 e Fase 9 (+ Prompts 10, 11 e 12)
 
 Não narradas fase a fase aqui como as anteriores (para não duplicar
 conteúdo) — a documentação de referência é `docs/crm.md` (Fase 7:
 Autenticação JWT, ownership de `Opportunity`, CRM/Pipeline/Contacts/
 Activities, Assisted Outreach Level 1 com IA), `docs/production-readiness.md`
 (Fase 8: CI/CD, worker RQ real, observabilidade, hardening de segurança,
-staging Docker, concorrência/carga real, backup/recovery), e
-`docs/prototype-generation.md` (Fase 9: Context Builder com classificação
-FACT/SIGNAL/UNKNOWN/INFERENCE, Generation Engine de uma única chamada,
-validação de segurança do artefato gerado, `GenerationRun`/
-`ContextSnapshot`). O Prompt 10 fechou o vínculo `Prototype`↔`Company`
-que faltava antes da Fase 9 — ver `docs/prototype-builder.md` e
-`docs/adr/`.
+staging Docker, concorrência/carga real, backup/recovery),
+`docs/prototype-generation.md` (Fase 9 / Prompt 11: Context Builder com
+classificação FACT/SIGNAL/UNKNOWN/INFERENCE, Generation Engine de uma
+única chamada, validação de segurança do artefato gerado,
+`GenerationRun`/`ContextSnapshot`), e `docs/prototype-refinement.md`
+(Prompt 12: refinamento por linguagem natural sobre o mesmo Generation
+Engine, `PrototypeVersion` com histórico linear). O Prompt 10 fechou o
+vínculo `Prototype`↔`Company` que faltava antes da Fase 9 — ver
+`docs/prototype-builder.md` e `docs/adr/`.
 
 ## O que NÃO está implementado ainda
 
@@ -498,15 +504,17 @@ que faltava antes da Fase 9 — ver `docs/prototype-builder.md` e
   e `docs/prototype-builder.md`). Autenticação/autorização em si **já
   existem** desde a Fase 7 (JWT próprio) e cobrem o Prototype Builder desde
   o Prompt 10.
-- No Prototype Builder: drag-and-drop, refinamento por linguagem natural,
-  versionamento (`PrototypeVersion`, ver `docs/adr/012-no-prototype-version-yet.md`),
+- No Prototype Builder: drag-and-drop, preview responsivo (desktop/
+  tablet/mobile), chat com histórico de conversa, branching de versões,
   publicação/deploy, domínio personalizado, marketplace de componentes,
-  sistema de plugins, histórico ilimitado (ver `docs/prototype-builder.md`,
-  "O que NÃO foi implementado"). **Geração automática de uma árvore de
-  componentes por IA já está implementada desde a Fase 9** — ver
-  `docs/prototype-generation.md`; geração de HTML/CSS/JS executável
-  continua fora de escopo em qualquer fase (nunca planejada — o Builder
-  gera uma árvore de componentes do catálogo fechado, nunca código).
+  sistema de plugins (ver `docs/prototype-builder.md`, "O que NÃO foi
+  implementado"). **Geração automática por IA (Fase 9), refinamento por
+  linguagem natural e versionamento com histórico linear (`
+  PrototypeVersion`, Prompt 12) já estão implementados** — ver
+  `docs/prototype-generation.md` e `docs/prototype-refinement.md`;
+  geração de HTML/CSS/JS executável continua fora de escopo em qualquer
+  fase (nunca planejada — o Builder gera uma árvore de componentes do
+  catálogo fechado, nunca código).
 - Billing. (CRM e Assisted Outreach **já estão implementados** desde a
   Fase 7 — ver `docs/crm.md`.)
 
@@ -573,10 +581,13 @@ e `docs/prototype-builder.md` para o detalhe de cada uma.
 
 ## Próxima fase
 
-**Refinamento por linguagem natural + Versionamento**, conforme o roadmap
-da arquitetura v0.2 (conteúdo não detalhado aqui — ver o prompt de
-implementação quando autorizado; decisão de adiar `PrototypeVersion` até
-esta fase documentada em `docs/adr/012-no-prototype-version-yet.md`). A
-Fase 9 (Context Builder + Generation Engine, Prompt 11) já está
-implementada — ver `docs/prototype-generation.md`. Não inicia
+**Refinamento por linguagem natural + Versionamento (Prompt 12) já está
+implementado** — ver `docs/prototype-refinement.md` e
+[ADR-014](./docs/adr/014-linear-prototype-versioning.md). O que fica
+para uma próxima fase de UX avançada do Prototype Builder, se autorizada
+(conteúdo não detalhado aqui — ver o prompt de implementação quando
+autorizado): preview responsivo (desktop/tablet/mobile) e um chat com
+histórico de conversa (hoje o refinamento é sempre um pedido único e
+independente, sem contexto de mensagens anteriores) — ambos citados
+explicitamente como fora de escopo do Prompt 12. Não inicia
 automaticamente: aguarda aprovação explícita.

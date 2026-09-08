@@ -6,6 +6,7 @@ import { Toolbar } from "@/components/prototype-builder/toolbar";
 import { ComponentPalette } from "@/components/prototype-builder/component-palette";
 import { Canvas } from "@/components/prototype-builder/canvas";
 import { PropertyPanel } from "@/components/prototype-builder/property-panel";
+import { RefinementBar } from "@/components/prototype-builder/refinement-bar";
 import { savePrototypeAction } from "@/app/prototypes/[prototypeId]/actions";
 import type { ComponentNode } from "@/lib/prototype/types";
 
@@ -73,13 +74,15 @@ export function PrototypeBuilder({
 
   return (
     <div className="-m-4 flex min-h-[80vh] flex-col overflow-hidden rounded-xl border border-border sm:-m-6 lg:-m-8">
-      <Toolbar state={state} dispatch={dispatch} name={name} onNameChange={setName} onSave={handleSave} saving={isSaving} dirty={dirty} />
+      <Toolbar prototypeId={prototypeId} state={state} dispatch={dispatch} name={name} onNameChange={setName} onSave={handleSave} saving={isSaving} dirty={dirty} />
 
       {saveError ? (
         <p role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           {saveError}
         </p>
       ) : null}
+
+      <RefinementBar prototypeId={prototypeId} dispatch={dispatch} />
 
       <div className="flex flex-1 flex-col lg:flex-row">
         {state.mode === "edit" ? (

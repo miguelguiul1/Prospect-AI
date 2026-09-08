@@ -181,6 +181,7 @@ interface GenerationRunResponse {
   error_code: string | null;
   error_message: string | null;
   grounding_warnings: string[] | null;
+  instruction: string | null;
   created_at: string;
   completed_at: string | null;
   execution_mode: string | null;
@@ -192,6 +193,7 @@ export interface GenerationRun {
   status: "pending" | "succeeded" | "failed";
   errorMessage: string | null;
   groundingWarnings: string[] | null;
+  instruction: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -203,6 +205,7 @@ function toGenerationRun(response: GenerationRunResponse): GenerationRun {
     status: response.status,
     errorMessage: response.error_message,
     groundingWarnings: response.grounding_warnings,
+    instruction: response.instruction,
     createdAt: response.created_at,
     completedAt: response.completed_at,
   };
@@ -222,4 +225,85 @@ export async function getGeneration(prototypeId: string, generationId: string): 
     `/api/prototypes/${prototypeId}/generations/${generationId}`
   );
   return toGenerationRun(response);
+}
+
+/** Refinamento por linguagem natural (Fase 9 / Prompt 12) — mesmo
+ * contrato/formato de `generatePrototype`, síncrono nesta máquina pelo
+ * mesmo motivo. Conta para o MESMO limite diário de gerações do
+ * protótipo (backend, `_check_prototype_generation_rate_limit`). */
+export async function refinePrototype(prototypeId: string, instruction: string): Promise<GenerationRun> {
+  const response = await apiPost<GenerationRunResponse>(`/api/prototypes/${prototypeId}/refine`, { instruction });
+  return toGenerationRun(response);
+}
+
+interface PrototypeVersionListItemResponse {
+  id: string;
+  version_number: number;
+  component_count: number;
+  description: string;
+  created_at: string;
+}
+
+export interface PrototypeVersionSummary {
+  id: string;
+  versionNumber: number;
+  componentCount: number;
+  description: string;
+  createdAt: string;
+}
+
+function toVersionSummary(response: PrototypeVersionListItemResponse): PrototypeVersionSummary {
+  return {
+    id: response.id,
+    versionNumber: response.version_number,
+    componentCount: response.component_count,
+    description: response.description,
+    createdAt: response.created_at,
+  };
+}
+
+export async function listPrototypeVersions(prototypeId: string): Promise<PrototypeVersionSummary[]> {
+  const response = await apiGet<PrototypeVersionListItemResponse[]>(`/api/prototypes/${prototypeId}/versions`);
+  return response.map(toVersionSummary);
+}
+
+interface PrototypeVersionDetailResponse extends PrototypeVersionListItemResponse {
+  components: BackendComponentNode[];
+  instruction: string | null;
+  restored_from_version_number: number | null;
+}
+
+export interface PrototypeVersionDetail extends PrototypeVersionSummary {
+  components: ComponentNode[];
+  instruction: string | null;
+  restoredFromVersionNumber: number | null;
+}
+
+function toVersionDetail(response: PrototypeVersionDetailResponse): PrototypeVersionDetail {
+  return {
+    ...toVersionSummary(response),
+    components: response.components.map(toComponentNode),
+    instruction: response.instruction,
+    restoredFromVersionNumber: response.restored_from_version_number,
+  };
+}
+
+export async function getPrototypeVersion(prototypeId: string, versionId: string): Promise<PrototypeVersionDetail> {
+  const response = await apiGet<PrototypeVersionDetailResponse>(
+    `/api/prototypes/${prototypeId}/versions/${versionId}`
+  );
+  return toVersionDetail(response);
+}
+
+/** Restaura uma versão antiga — cria uma versão NOVA idêntica a ela
+ * (nunca reescreve/apaga histórico, ver ADR-014). Nunca chama IA: sem
+ * estado de "gerando", sem custo. */
+export async function restorePrototypeVersion(
+  prototypeId: string,
+  versionId: string
+): Promise<PrototypeVersionDetail> {
+  const response = await apiPost<PrototypeVersionDetailResponse>(
+    `/api/prototypes/${prototypeId}/versions/${versionId}/restore`
+  );
+  return toVersionDetail(response);
 }

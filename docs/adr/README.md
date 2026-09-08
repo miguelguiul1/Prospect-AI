@@ -18,8 +18,9 @@ desta fase, não uma migração das anteriores).
 | [009](./009-backend-content-security-policy.md) | Content-Security-Policy restritiva no backend, com exceção só para `/docs`/`/redoc` | Aceita |
 | [010](./010-jwt-key-versioning.md) | Não implementar rotação de `JWT_SECRET_KEY` com múltiplas chaves (`kid`) agora | Aceita (reconsiderar sob gatilho) |
 | [011](./011-rate-limiter-distribuido.md) | Não implementar rate limiter distribuído agora | Aceita (reconsiderar sob gatilho) |
-| [012](./012-no-prototype-version-yet.md) | Não criar `PrototypeVersion` nesta fase (Prompt 11) | Aceita (reconsiderar sob gatilho) |
+| [012](./012-no-prototype-version-yet.md) | Não criar `PrototypeVersion` nesta fase (Prompt 11) | Superada (ver 014) |
 | [013](./013-per-component-type-prop-schema.md) | Correção mínima (não schema completo) para o bug real de prop key errada (Prompt 11) | Aceita (reconsiderar sob gatilho) |
+| [014](./014-linear-prototype-versioning.md) | Histórico de `PrototypeVersion` sempre linear; versão atual = a mais recente; restaurar = copiar (Prompt 12) | Aceita |
 
 ## Formato
 

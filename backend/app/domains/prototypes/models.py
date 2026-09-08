@@ -41,7 +41,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Uuid
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -79,6 +79,11 @@ class Prototype(Base):
 
     generation_runs: Mapped[list["GenerationRun"]] = relationship(
         back_populates="prototype", cascade="all, delete-orphan"
+    )
+    versions: Mapped[list["PrototypeVersion"]] = relationship(
+        back_populates="prototype",
+        cascade="all, delete-orphan",
+        order_by="PrototypeVersion.version_number",
     )
 
 
@@ -137,6 +142,38 @@ class GenerationRun(Base):
     # bloqueiam a geração, só ficam visíveis para revisão humana depois.
     grounding_warnings: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Três campos novos do Prompt 12 (Refinamento + Versionamento) — todos
+    # `NULL` para uma geração inicial, preenchidos só quando este
+    # `GenerationRun` é um REFINAMENTO (instrução em linguagem natural
+    # sobre um protótipo que já tem geração bem-sucedida, ver
+    # `app.domains.prototypes.generation.service`).
+    #
+    # `instruction`: o texto livre do usuário — é o que diferencia "isto é
+    # um refinamento" de "isto é a geração inicial" (nenhum enum
+    # `run_type` separado: a presença/ausência deste campo já comunica
+    # isso sem duplicar informação).
+    instruction: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    # `based_on_version_number`: o `PrototypeVersion.version_number` mais
+    # recente NO MOMENTO em que este refinamento começou — um inteiro
+    # solto, não uma FK (mesma decisão de
+    # `PrototypeVersion.restored_from_version_number` abaixo: o número já
+    # é estável e suficiente para auditoria, e evita uma dependência
+    # circular de FK entre `prototype_generation_runs` e
+    # `prototype_versions`, já que cada `PrototypeVersion` também referencia
+    # o `GenerationRun` que a originou). Nota: a árvore de fato ENVIADA ao
+    # provider é sempre `Prototype.components` no momento da execução, que
+    # pode já incluir uma edição manual feita DEPOIS desta versão (edição
+    # manual via `PUT` não cria uma `PrototypeVersion` nesta fase — ver
+    # docstring de `PrototypeVersion`) — este campo registra a última
+    # versão RASTREADA, não necessariamente byte-a-byte o que foi enviado.
+    based_on_version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # `diff_summary`: heurística aproximada de "o quanto mudou" entre a
+    # árvore antes e depois deste refinamento (`app.domains.prototypes.
+    # generation.diffing.summarize_component_diff`) — nunca um gate de
+    # validação, só observabilidade para revisão humana (seção 3 do
+    # Prompt 12: medir/incentivar mudança mínima, de forma aproximada).
+    diff_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -144,6 +181,7 @@ class GenerationRun(Base):
     context_snapshot: Mapped["ContextSnapshot | None"] = relationship(
         back_populates="generation_run", uselist=False, cascade="all, delete-orphan"
     )
+    version: Mapped["PrototypeVersion | None"] = relationship(back_populates="generation_run", uselist=False)
 
 
 class ContextSnapshot(Base):
@@ -165,3 +203,83 @@ class ContextSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     generation_run: Mapped["GenerationRun"] = relationship(back_populates="context_snapshot")
+
+
+class PrototypeVersion(Base):
+    """Uma versão imutável da árvore de componentes de um `Prototype`
+    (Fase 9 / Prompt 12 — decisão de adiar isto para esta fase já estava
+    registrada em `docs/adr/012-no-prototype-version-yet.md`).
+
+    Toda geração por IA bem-sucedida (inicial OU refinamento) e toda
+    restauração (`POST .../restore`) cria uma linha NOVA aqui — nunca uma
+    edição in-place (`app.domains.prototypes.versioning.create_version` é
+    o único lugar que cria uma; tanto `PrototypeGenerationService` quanto
+    `PrototypeVersionService.restore` chamam essa mesma função, para que a
+    invariante abaixo nunca dependa de dois caminhos de código
+    concordarem por acidente).
+
+    **Histórico sempre linear, nunca branching** (decisão explícita da
+    fase — ver ADR-014): `version_number` cresce estritamente por
+    `Prototype`, nunca há dois caminhos divergentes. "Versão atual" É a de
+    maior `version_number` — não existe um ponteiro separado de "versão
+    ativa" nem um `is_active`. Restaurar uma versão antiga NÃO apaga nem
+    reordena nada: sempre cria uma versão NOVA com os mesmos `components`
+    da antiga (`restored_from_version_number` registra qual) — mesmo
+    espírito de "nunca sobrescrever, sempre uma linha nova" do resto do
+    projeto (`SalesBrief`, `GenerationRun`).
+
+    **Invariante mantida por `create_version`**: `Prototype.components`
+    sempre reflete `components` da versão de maior `version_number`.
+
+    **Limitação documentada, deliberada (Prompt 12)**: uma edição manual
+    do Builder (`PUT /api/prototypes/{id}`, já existente desde a Fase 6)
+    escreve direto em `Prototype.components` e NÃO cria uma
+    `PrototypeVersion` — versionar toda edição manual também estava fora
+    do escopo desta fase (o pedido original é sobre refinamento por IA +
+    histórico dessas gerações, não sobre versionar cada tecla do editor
+    manual). Consequência aceita: depois de uma edição manual, a "versão
+    atual" (`PrototypeVersion` de maior número) pode ficar temporariamente
+    desatualizada em relação a `Prototype.components`, até a próxima
+    geração/refinamento/restauração — a lista de versões nunca mostra as
+    edições manuais como uma linha própria. `PrototypeGenerationService`
+    sempre lê `Prototype.components` (nunca o `components` da última
+    `PrototypeVersion`) como a árvore "atual" a refinar, então uma
+    edição manual feita depois da última versão rastreada ainda É
+    respeitada pelo refinamento seguinte — só não aparece sozinha na
+    lista de histórico. Ver relatório do Prompt 12 para a discussão
+    completa desta decisão.
+    """
+
+    __tablename__ = "prototype_versions"
+    __table_args__ = (
+        UniqueConstraint("prototype_id", "version_number", name="uq_prototype_versions_prototype_id_version_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    prototype_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("prototypes.id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Sempre a árvore INTEIRA (mesmo formato de `Prototype.components`),
+    # nunca um diff/patch — mais simples de exibir/restaurar, mesma
+    # decisão de "o Builder sempre manda o estado completo" da Fase 6.
+    components: Mapped[list] = mapped_column(JSON, nullable=False)
+
+    # Preenchido quando esta versão veio de uma geração por IA (inicial ou
+    # refinamento). `NULL` só quando a versão foi criada por
+    # `PUT` manual ou por restauração — os outros dois campos abaixo
+    # distinguem esses casos (ver `_version_description` em
+    # `app.api.routes.prototypes`).
+    generation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("prototype_generation_runs.id"), nullable=True, unique=True, index=True
+    )
+    # Preenchido só quando esta versão veio de `POST .../restore` — aponta
+    # para o `version_number` restaurado, não uma FK para a linha em si
+    # (mesmo raciocínio de `GenerationRun.based_on_version_number`: o
+    # número já é estável e suficiente para exibição/auditoria, sem
+    # precisar navegar objeto-a-objeto a partir daqui).
+    restored_from_version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    prototype: Mapped["Prototype"] = relationship(back_populates="versions")
+    generation_run: Mapped["GenerationRun | None"] = relationship(back_populates="version")

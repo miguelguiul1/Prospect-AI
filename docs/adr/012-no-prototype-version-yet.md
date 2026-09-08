@@ -1,6 +1,9 @@
 # ADR-012: Não criar `PrototypeVersion` nesta fase
 
-**Status**: Aceita — decisão de NÃO implementar, com gatilho de reconsideração (Prompt 11, seção 4)
+**Status**: Superada — o gatilho abaixo disparou no Prompt 12 (Refinamento
++ Versionamento), que implementou `PrototypeVersion`. Ver
+[ADR-014](./014-linear-prototype-versioning.md) para o modelo de dados e
+as decisões de design adotadas quando o gatilho disparou.
 
 ## Contexto
 
