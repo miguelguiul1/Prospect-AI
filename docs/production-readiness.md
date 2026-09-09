@@ -26,14 +26,28 @@ Qualquer falha em qualquer etapa bloqueia o merge — é a primeira vez que a
 qualidade deste projeto deixa de depender inteiramente de disciplina
 manual.
 
-**Importante sobre validação:** o arquivo YAML foi validado
-estruturalmente (`yaml.safe_load`, parse sem erro, jobs/steps presentes
-como esperado) e todo comando referenciado já foi executado manualmente
-com sucesso nesta mesma sessão. A execução real do workflow em si — o
-GitHub Actions de fato rodando os containers de serviço e reportando
-verde — **nunca foi observada**, porque nenhum push foi feito durante a
-Fase 8 (regra explícita desta fase). Isso só será confirmado depois que o
-usuário decidir publicar.
+**Importante sobre validação (na própria Fase 8):** o arquivo YAML foi
+validado estruturalmente (`yaml.safe_load`, parse sem erro, jobs/steps
+presentes como esperado) e todo comando referenciado já havia sido
+executado manualmente com sucesso naquela sessão. A execução real do
+workflow em si — o GitHub Actions de fato rodando os containers de
+serviço e reportando verde — nunca tinha sido observada, porque nenhum
+push havia sido feito durante a Fase 8 (regra explícita daquela fase).
+
+**Atualização (Prompt 14) — a execução real do workflow foi observada, e
+está falhando:** pushes aconteceram nos Prompts 10-13 (commits `81e4820`
+até `2f5ada6`, verificado via API pública do GitHub —
+`gh` CLI não está instalado nesta máquina). Todas as 5 execuções de CI
+registradas até agora **falharam** (`conclusion: failure`), nos dois jobs
+(`Frontend` e `Backend`), consistentemente desde o primeiro push (Prompt
+10). Isto NÃO é o mesmo "nunca observado" documentado acima — o workflow
+roda, mas está vermelho. A causa raiz específica não foi determinada
+nesta sessão: os logs completos de cada step exigem autenticação
+(`gh auth login` ou um token) que esta sessão não tem; a API pública sem
+autenticação só expõe que a falha acontece no step "Install dependencies"
+(Frontend) e no step "Run test suite" (Backend), sem o texto do erro em
+si. Ver a seção "Estado do CI/CD Real (Prompt 14)" para o que falta para
+diagnosticar e o que precisa do usuário.
 
 ### `tests/infra/` — testes contra infraestrutura real
 
@@ -44,10 +58,17 @@ morta antes de qualquer import (ver `tests/conftest.py`). Se a infraestrutura
 real não responder, a suíte inteira do arquivo é pulada com um motivo
 explícito — nunca falha silenciosamente, nunca finge sucesso.
 
-Em desenvolvimento local (sem PostgreSQL/Redis reais, mesma limitação
-documentada desde a Fase 0): as 11 verificações destes dois arquivos
+Em desenvolvimento local sem PostgreSQL/Redis reais (a situação de toda
+máquina usada no projeto, F0 a F8): as verificações destes dois arquivos
 aparecem como `skipped`, nunca como `passed`. Em CI, com os serviços reais
 do workflow acima, elas executam de verdade.
+
+**Atualização (Prompt 14)**: esta limitação deixou de valer para a máquina
+de desenvolvimento atual — PostgreSQL 18 e Redis (via Memurai Developer)
+foram instalados nativamente no Windows (não Docker/WSL2; ver seção
+"Validação Real Contra Infraestrutura Nativa" abaixo para o porquê e os
+resultados). As 12 verificações destes arquivos agora rodam e passam
+localmente também, não só em CI.
 
 `test_real_postgres.py` prova, contra PostgreSQL real: conectividade,
 versão mínima, que todas as tabelas F0-F7 existem após a migration real,
@@ -100,12 +121,14 @@ reaproveitando a mesma imagem do backend com um `command` diferente.
   automático; os nomes de fila do worker e de cada domínio batem
   exatamente (teste dedicado de consistência, para nunca mais silenciosamente
   esquecer uma fila nova aqui).
-- Execução real do worker contra Redis real: **NÃO VALIDADO** — sem Redis
-  disponível nesta máquina. O workflow de CI (F8.1) provisiona Redis real
-  como serviço, mas ainda não inclui uma etapa que suba `app.worker` e
-  enfileire um job real de ponta a ponta — isso é uma extensão natural e
-  pequena para quando o workflow for observado rodando pela primeira vez,
-  não implementada agora para não expandir escopo sem necessidade.
+- Execução real do worker contra Redis real: **VALIDADO (Prompt 14)** —
+  `tests/infra/test_real_worker.py` enfileira um job real numa fila Redis
+  real e um `SimpleWorker` RQ real (burst mode, não `fakeredis`) o executa
+  de ponta a ponta; passou nesta sessão contra Redis nativo (Memurai) nesta
+  máquina. O workflow de CI (F8.1) ainda não tem uma etapa dedicada que
+  suba `python -m app.worker` como processo separado e observe-o consumir
+  a fila — a lacuna que resta é só essa (o mecanismo enqueue→worker→execução
+  em si já está provado real).
 
 ## Rate Limiting endurecido + Security Hardening (F8.3)
 
@@ -181,6 +204,23 @@ permanece **NÃO VALIDADA** (sem Docker nesta máquina, mesma limitação de
 sempre). `backend/Dockerfile` ganhou um `HEALTHCHECK` real (usa `/health`,
 que nunca toca banco/Redis — seguro como liveness).
 
+**Gap conhecido, deliberadamente não contornado (Prompt 14)**: a
+validação de Postgres/Redis desta fase (ver "Validação Real Contra
+Infraestrutura Nativa" acima) usou instalação nativa no Windows
+especificamente para NÃO precisar de Docker Desktop/WSL2 nesta máquina
+(risco de RAM — só ~1GB livre logo após reiniciar, de ~7,7GB no total).
+Isso valida Postgres e Redis como dependências de runtime, mas não toca
+`docker build`/`docker compose up` em nenhum momento — a construção real
+das imagens (`backend/Dockerfile`, `frontend/Dockerfile`) e a
+orquestração via `docker-compose.yml` continuam **inteiramente NÃO
+VALIDADAS**, exatamente como antes desta sessão. Nenhuma tentativa foi
+feita de contornar isso (ex.: simular `docker build` com outra
+ferramenta, validar só a sintaxe e chamar de "validado") — continua
+honestamente como um gap em aberto, que só se fecha com Docker Desktop
+disponível (nesta máquina ou em CI, onde os serviços `postgres`/`redis`
+já rodam como containers reais, mas a imagem do PRÓPRIO projeto nunca foi
+construída nem lá).
+
 **Por que nenhum healthcheck de container foi criado para o `worker`**: RQ
 não expõe nenhum endpoint HTTP para checar; inventar um mecanismo próprio
 só para preencher essa lacuna seria mais frágil do que documentar
@@ -221,26 +261,233 @@ reais existirem de verdade para testar contra).
 
 ## Real Runtime Validation (F8.5)
 
-Estado real de cada dependência externa, nesta sessão — nunca simulado
-como validado quando não foi:
+Estado real de cada dependência externa. As linhas abaixo cobrem a sessão
+original da Fase 8 (nenhuma infraestrutura real disponível); ver
+"Validação Real Contra Infraestrutura Nativa (Prompt 14)" para a sessão
+que finalmente teve Postgres/Redis reais e o que mudou:
 
 | Dependência | Status | Evidência |
 |---|---|---|
-| PostgreSQL | **NOT VALIDATED (ao vivo)** / VALIDADO EM CI (estrutural, nunca observado rodar) | `tests/infra/test_real_postgres.py` (7 testes: conectividade, versão, todas as tabelas F0-F7, índice parcial real, race condition de stage-change, concorrência de criação de Opportunity) — escrito e pronto, roda de verdade em CI contra um serviço `postgres:16-alpine` real; nunca observado executando nesta sessão (nenhum push foi feito) |
-| Redis | **NOT VALIDATED (ao vivo)** / VALIDADO EM CI (estrutural) | `tests/infra/test_real_redis.py` (5 testes: rate limiter real) + `tests/infra/test_real_worker.py` (novo nesta fase: worker RQ contra Redis real, não `fakeredis`) — mesma situação: pronto, nunca observado rodando |
-| RQ (worker) | **VALIDADO COM MOCK** (fakeredis, F8.2) + estrutural em CI (não observado) | `tests/jobs/test_worker_integration.py` |
-| Anthropic | **NOT VALIDATED — credencial ausente** | `tests/infra/test_real_anthropic.py` (novo): pula automaticamente sem `ANTHROPIC_API_KEY`; se uma chave real for adicionada como GitHub Secret, faz UMA chamada mínima real (poucas dezenas de tokens) para provar conectividade/autenticação — nunca geração em lote. Nenhuma chave foi fornecida em nenhuma fase deste projeto (F0-F8) |
-| PostgreSQL — concorrência (Opportunity, stage-change) | Código escrito e correto (revisão + teste pronto para CI), **nunca executado contra Postgres real nesta sessão** | Mesmo arquivo acima |
-| Redis — restart/reconexão sob operação | **NOT VALIDATED** | Exigiria controlar o ciclo de vida de um processo Redis real (matar/reiniciar), não só verificar presença/ausência — fora do alcance de um teste automatizado sem infraestrutura orquestrável de verdade |
+| PostgreSQL | **VALIDADO AO VIVO (Prompt 14)** | `tests/infra/test_real_postgres.py` (6 testes: conectividade, versão, todas as tabelas F0-F7, índice parcial real, race condition de stage-change, concorrência de criação de Opportunity) — rodou de verdade contra PostgreSQL 18 nativo (Windows) e passou. Segue validado estruturalmente em CI contra `postgres:16-alpine`, mas essa execução de CI específica continua nunca observada (nenhum push foi feito) |
+| Redis | **VALIDADO AO VIVO (Prompt 14)** | `tests/infra/test_real_redis.py` (5 testes: rate limiter real) + `tests/infra/test_real_worker.py` (worker RQ contra Redis real, não `fakeredis`) — rodaram contra Redis nativo (Memurai Developer) e passaram. Mesma ressalva de CI acima: validado estruturalmente, execução do workflow em si não observada |
+| RQ (worker) | **VALIDADO COM MOCK** (fakeredis, F8.2) **+ VALIDADO AO VIVO (Prompt 14)**, contra Redis real | `tests/jobs/test_worker_integration.py` + `tests/infra/test_real_worker.py` |
+| Anthropic | **NOT VALIDATED — credencial ausente do ambiente do processo, deliberado** | `tests/infra/test_real_anthropic.py`: pula automaticamente sem `ANTHROPIC_API_KEY` no ambiente do processo. `backend/.env` tem uma chave real (Prompt 11), mas o Prompt 14 delimitou o escopo a banco/fila/CI, não ao Generation Engine — a chave não foi exportada para o processo de teste de propósito, nenhuma chamada real foi feita |
+| PostgreSQL — concorrência (Opportunity, stage-change) | **VALIDADO AO VIVO (Prompt 14)**, contra Postgres real | Mesmo arquivo acima |
+| Redis — restart/reconexão sob operação | **NOT VALIDATED** | Exigiria controlar o ciclo de vida de um processo Redis real (matar/reiniciar) durante uma operação em andamento — ainda não exercitado nesta sessão nem em nenhuma anterior |
 
-**Resumo honesto**: nenhuma das quatro dependências externas (PostgreSQL,
-Redis, RQ contra Redis real, Anthropic) foi observada funcionando de
-verdade nesta sessão — porque nenhuma delas esteve disponível. O que a
-Fase 8 entrega é a **capacidade de validação real**, pronta e testada
-estruturalmente, que só precisa da infraestrutura existir (e do workflow
-de CI ser observado rodando, o que exige um push) para deixar de ser
-"NOT VALIDATED" e virar "REAL" de verdade — sem reescrever nada quando
-esse dia chegar.
+**Resumo honesto**: PostgreSQL, Redis e RQ contra Redis real foram
+observados funcionando de verdade nesta sessão (Prompt 14), pela primeira
+vez no projeto — contra infraestrutura nativa no Windows (não Docker,
+decisão deliberada por restrição de RAM da máquina; ver seção dedicada
+abaixo). Anthropic continua não validado ao vivo, mas por escopo
+deliberado desta fase, não por falta de infraestrutura. O que resta
+genuinamente pendente: a execução do workflow de CI em si sendo observada
+rodando (exige um push), o failover de Redis sob operação, e a construção
+real das imagens Docker/Compose (nenhuma sessão até aqui teve Docker
+disponível).
+
+## Validação Real Contra Infraestrutura Nativa (Prompt 14)
+
+A Fase 8 entregou a *capacidade* de validação real (`tests/infra/`), mas
+nunca a observou rodando: nenhuma máquina usada no projeto (F0-F8) tinha
+PostgreSQL, Redis ou Docker disponíveis. Esta sessão fecha essa lacuna,
+mas por um caminho diferente do assumido em toda a Fase 8 — não Docker
+Compose, e sim PostgreSQL 18 e Redis (via Memurai Developer, o substituto
+nativo mais maduro disponível para Windows — o "Redis on Windows" do
+winget é um fork de 2016, versão 3.0, abandonado) instalados diretamente
+no SO. Decisão do usuário: a máquina tinha ~1GB de RAM livre logo após
+reiniciar (~7,7GB no total) — rodar Docker Desktop + WSL2 nela era um
+risco desnecessário para o que a validação exigia. `docker-compose.yml`
+continua sendo o caminho documentado para staging/produção (Linux,
+containers reais); a instalação nativa é especificamente para
+desenvolvimento/validação local nesta máquina, e não substitui a
+necessidade de validar a construção real das imagens Docker/Compose em si
+(que continua **NÃO VALIDADA** — ver seção "Docker + Staging Integrado" —
+porque nenhuma sessão até aqui teve Docker disponível, e esta optou
+deliberadamente por não instalá-lo).
+
+**O que foi validado, contra PostgreSQL 18 e Redis (Memurai) reais
+rodando nesta máquina:**
+
+- **Migrations, ida e volta completa contra Postgres real**: `alembic
+  upgrade head` (as 13 migrations até `0013_prototype_versioning`)
+  aplicado com sucesso; `alembic downgrade base` executou os 13
+  `downgrade()` em cadeia pela primeira vez contra um banco real (não
+  SQLite) — confirmado que só `alembic_version` resta; `alembic upgrade
+  head` de novo reconstruiu exatamente as mesmas 24 tabelas (comparação
+  linha a linha, sem diferença). Ver "Backup, Recovery e Migrations" para
+  o detalhe de que isto foi verificado manualmente, não por um novo teste
+  automatizado.
+- **`tests/infra/test_real_postgres.py`** (6 testes): todos passando —
+  conectividade, versão, as tabelas F0-F7 existem, o índice único parcial
+  `uq_opportunities_company_open` existe e é realmente parcial, a race
+  condition de stage-change sem lock é observável, a segunda Opportunity
+  OPEN concorrente é rejeitada pelo banco.
+- **`tests/infra/test_real_redis.py`** (5 testes): todos passando — ping,
+  o rate limiter realmente permite dentro do limite, realmente bloqueia
+  acima dele, expira a janela, isola chaves diferentes.
+- **`tests/infra/test_real_worker.py`** (1 teste): job enfileirado no
+  Redis real, executado de ponta a ponta por um `SimpleWorker` RQ real.
+- **Suíte completa** (`pytest`, sem nenhuma variável de ambiente extra):
+  `701 passed, 3 skipped` — as 12 verificações de infraestrutura real
+  acima, mais toda a suíte pré-existente contra SQLite, sem nenhuma
+  regressão. Os 3 `skipped` são a Anthropic (ver abaixo) e um skip
+  pré-existente não relacionado a esta sessão.
+- **Anthropic**: `tests/infra/test_real_anthropic.py` continua pulado —
+  fora do escopo desta fase (o objetivo era banco/fila/CI, não o
+  Generation Engine); nenhuma chamada real foi feita.
+
+**Dois achados reais desta sessão, ambos corrigidos.** Nenhum dos dois é
+um bug de lógica de negócio — são gaps de configuração/suíte só visíveis
+com infraestrutura real disponível pela primeira vez:
+
+1. **`backend/.env` `REDIS_URL`: `localhost` → `127.0.0.1`.** Nesta
+   máquina Windows, resolver o hostname `localhost` custa ~220ms de forma
+   consistente (medido: 5 tentativas, 202-233ms cada) — o suficiente para
+   estourar o timeout de 0.2s que `app/jobs/queue.py:29` usa
+   deliberadamente ("falhar rápido quando Redis está ausente"). Com
+   `127.0.0.1` (sem resolução de nome), o mesmo round-trip cai para
+   ~14ms. Como o redis-py descarta uma conexão após qualquer erro (nunca
+   a devolve ao pool), cada tentativa seguinte pagava o mesmo custo de
+   resolução de novo — um loop de timeouts reais contra um Redis 100%
+   saudável.
+
+   **A causa raiz específica (resolução de `localhost` custar ~220ms) é
+   desta máquina/Windows** — em CI (Linux) e dentro da rede interna do
+   Docker Compose (que resolve `redis` via DNS interno do Compose, não
+   via `localhost`) esse custo específico não existe. **Mas a classe de
+   risco é geral e deve ser vigiada em qualquer ambiente futuro, não só
+   corrigida aqui**: `get_redis_connection()` (`app/jobs/queue.py:29`)
+   define `socket_connect_timeout`/`socket_timeout` em 0.2s, mas essa
+   janela cobre só a fase de conexão/leitura do socket — a resolução de
+   nome (`getaddrinfo`) acontece ANTES e não é limitada por nenhum dos
+   dois timeouts. Qualquer ambiente (staging, produção, um Redis
+   gerenciado atrás de um endpoint DNS, um cluster Kubernetes sob DNS
+   interno instável) onde `REDIS_URL` aponte para um hostname que
+   precise de resolução — não um IP literal nem um nome já cacheado por
+   um resolvedor rápido — está exposto exatamente a esta mesma classe de
+   falha se a resolução de nome for lenta por qualquer motivo (DNS da
+   VPC sob carga, split-horizon DNS, cache frio). O sintoma em produção
+   seria silencioso: `check_and_increment` cai em `fail_open`/
+   `fail_closed`/`local_fallback` sem nenhum erro visível fora do log
+   `rate_limit_check_unavailable` e da métrica
+   `rate_limit_redis_unavailable_total` (F8.6) — rate limiting
+   efetivamente desativado (ou operações de IA bloqueadas, dependendo da
+   política) sem que o Redis em si esteja realmente indisponível.
+   **Recomendação para quando um ambiente real existir**: preferir um IP
+   literal ou um nome já resolvido por um resolvedor local rápido em
+   `REDIS_URL` quando possível (como o Docker Compose já faz, via DNS
+   interno), e monitorar `rate_limit_redis_unavailable_total` em produção
+   como sinal de que este timeout pode estar apertado demais para o
+   ambiente real — não é um problema resolvido de vez, é um limite de
+   design que só nunca foi estressado antes desta sessão.
+2. **`tests/infra/test_real_redis.py` — `TestRateLimiterAgainstRealRedis`
+   nunca havia exercitado Redis real, em nenhuma sessão, nem em CI.** A
+   classe chama `check_and_increment` (código de produção), que lê
+   `REDIS_URL` via `get_settings()` — mas `tests/conftest.py` fixa
+   `REDIS_URL=redis://localhost:6399/0` (porta morta, deliberadamente)
+   para a sessão inteira de pytest, sem exceção para `tests/infra/`. Sem
+   um fixture que contornasse isso, a classe sempre bateu na porta morta
+   e caiu silenciosamente no fail-open — nunca testou o que seu próprio
+   docstring afirma testar, desde que foi escrita na Fase 8. Corrigido com
+   um fixture `autouse` (`_app_client_targets_real_redis`) que aponta o
+   `REDIS_URL` do processo para `REAL_REDIS_URL` e limpa os `lru_cache` de
+   `get_settings`/`get_redis_connection` só durante os testes desta
+   classe — mesmo padrão de "conexão própria, independente do que o resto
+   da suíte fixa" que `test_real_postgres.py` já usava.
+
+`prospect_ai_ci` (o nome de banco que `REAL_POSTGRES_URL` usa por padrão,
+para não misturar dados de teste com o banco de desenvolvimento
+`prospect_ai`) foi criado e migrado nesta sessão — a partir de agora, um
+`pytest` sem nenhuma variável de ambiente extra já valida Postgres e Redis
+reais por padrão nesta máquina, não só em CI.
+
+## Estado do CI/CD Real (Prompt 14)
+
+Verificado via API pública do GitHub (`api.github.com`, sem autenticação —
+`gh` CLI não está instalado nesta máquina e não há token configurado
+nesta sessão). `git status` confirma que `main` local está exatamente em
+sincronia com `origin/main` (`up to date`) — os pushes dos Prompts 10-13
+realmente aconteceram, ao contrário do que a seção "CI/CD (F8.1)" acima
+(escrita antes de qualquer push) documentava.
+
+**As 5 execuções de CI registradas até agora, todas `failure`:**
+
+| Run | Commit | Prompt | Conclusão |
+|---|---|---|---|
+| 5 | `2f5ada6` | 13 (preview responsivo + chat de refinamento) | failure |
+| 4 | `dd3a978` | 12 (refinamento + versionamento) | failure |
+| 3 | `617e610` | 11 (validação Anthropic real) | failure |
+| 2 | `81e4820` | 10 (fecho dos riscos do F8) | failure |
+| 1 | `e961f5b` | f8.9 (patch PyJWT) | failure |
+
+Run mais recente (commit `2f5ada6`, o HEAD atual de `main`):
+https://github.com/miguelguiul1/Prospect-AI/actions/runs/34284012645
+
+Os dois jobs falham, sempre no mesmo lugar nas 5 execuções:
+
+- **Frontend** (`typecheck + lint + test + build`): falha no step
+  "Install dependencies" — antes mesmo de `tsc`/lint/test/build rodarem.
+- **Backend** (`pytest + infra real`): falha no step "Run test suite
+  (SQLite — mesmo padrão de `tests/conftest.py`)" — ou seja, na suíte
+  `pytest -q` básica contra SQLite, antes mesmo de chegar nas migrations
+  reais contra o `postgres:16-alpine` do runner ou em `tests/infra/`.
+
+**Causa raiz de cada job, confirmada pelo usuário lendo o log real na UI
+do GitHub (`gh` CLI não está instalado nesta máquina — sem auth, a API
+pública só expõe status/conclusão por step, não o texto do log; `GET
+.../actions/jobs/{id}/logs` retorna `403 Forbidden` sem token):**
+
+- **Frontend**: conflito de peer dependency. `vitest@5.0.0` exige
+  `@types/node: "^22.0.0 || >=24.0.0"`, mas `package.json` fixava
+  `@types/node` em `^20`. `npm ci` (usado no CI, estrito por natureza)
+  falha nisso; `npm install`/`npm ci` locais toleravam silenciosamente —
+  reproduzido nesta sessão com o npm local (11.12.1), que não gerou
+  erro algum, contra o npm mais antigo que vem com Node 22 no runner
+  (mais estrito). **Corrigido**: `@types/node` `^20` → `^22` (bate com o
+  `node-version: "22"` que o próprio workflow já usa), lockfile
+  regenerado. Os 4 passos do job Frontend foram replicados localmente
+  após a correção (`npm ci` limpo, `tsc --noEmit`, `lint`, `test` —
+  187/187 —, `build`), todos passando; `npm audit --audit-level=critical`
+  também limpo (0 vulnerabilidades).
+
+- **Backend**: não era ordem de steps nem URL errada — os dois já
+  estavam corretos, e essa possibilidade foi ativamente descartada por
+  leitura antes de se chegar à causa real (texto idêntico byte a byte
+  entre `DATABASE_URL` do step de migration e `REAL_POSTGRES_URL` do step
+  de infra; os 13 arquivos de migration rastreados pelo git batem com o
+  disco; nenhum `.env` comitado). A causa real: `backend/pyproject.toml`
+  tem `testpaths = ["tests"]` e o step "Run test suite (SQLite — mesmo
+  padrão de `tests/conftest.py`)" roda `pytest -q` **sem nenhum argumento
+  de caminho** — ou seja, apesar do nome, ele coleta a árvore `tests/`
+  inteira, `tests/infra/` incluído. `tests/infra/test_real_postgres.py` e
+  `test_real_redis.py` têm seus próprios defaults hardcoded
+  (`REAL_POSTGRES_URL`/`REAL_REDIS_URL` apontando exatamente para os
+  serviços `postgres`/`redis` do job) — que já estão de pé desde antes do
+  primeiro step. Resultado: estes testes rodam de verdade **dentro do
+  step "SQLite"**, antes do step "Apply migrations" (mais abaixo no
+  arquivo) sequer ter começado — batendo num Postgres real mas sem
+  nenhuma tabela (nem `alembic_version`), e num Redis real que expõe o
+  mesmo bug de fixture do rate limiter descrito acima. O step falha, e
+  por isso os dois seguintes ("Apply migrations", "Run infra tests")
+  aparecem como `skipped` nas 5 execuções — nunca chegam a rodar.
+  **Corrigido**: `pytest -q --ignore=tests/infra` no step "SQLite"
+  (`.github/workflows/ci.yml`), para que ele faça só o que o nome promete.
+  Validado localmente: `pytest -q --ignore=tests/infra` coleta 690 testes
+  (704 − 14, exatamente os de `tests/infra/`) e passa limpo (`689 passed,
+  1 skipped`).
+
+Nenhuma das duas causas foi óbvia por leitura superficial — as duas
+exigiram reproduzir o comando exato do CI localmente (`npm ci` limpo) e/ou
+descartar metodicamente as hipóteses mais simples (ordem de steps, URL
+errada) antes de achar a real. Ver commits desta sessão para o diff
+completo de cada correção.
+
+**O que ainda não foi observado**: o workflow rodando verde de ponta a
+ponta na UI real do GitHub — as correções acima foram validadas pela
+melhor aproximação local possível (reprodução exata dos comandos de cada
+step), não pela execução real do Actions em si. Isso só se confirma depois
+de um push.
 
 ## Observabilidade (F8.6)
 
@@ -405,10 +652,15 @@ injetada via `monkeypatch` cirúrgico, documentado em cada teste.
 - Restart do backend sob carga (impacto real em conexões em andamento) —
   o script de load test para o servidor de forma limpa ao final, nunca o
   interrompe abruptamente no meio de uma rajada.
-- Qualquer teste de carga contra PostgreSQL/Redis reais — os números desta
-  seção são todos contra SQLite; `tests/infra/` (F8.1) contém os testes de
-  concorrência prontos para PostgreSQL real, mas continuam nunca
-  executados nesta sessão (exigem infraestrutura ausente).
+- Teste de **carga** (`load_test.py`, throughput/latência sob
+  `ThreadPoolExecutor`) contra PostgreSQL/Redis reais — os números desta
+  seção continuam todos contra SQLite; o script não foi re-executado contra
+  Postgres real. Diferente disto, os testes de **corretude sob
+  concorrência** de `tests/infra/` (race condition de stage-change,
+  rejeição da segunda Opportunity OPEN concorrente) **foram** executados
+  contra PostgreSQL real no Prompt 14 (ver seção dedicada) — a lacuna que
+  resta aqui é especificamente sobre números de throughput/latência, não
+  sobre corretude.
 
 Regressão completa após F8.7: **518 passed, 15 skipped, 0 failed** (514
 pré-existentes + 4 novos de `tests/test_failure_injection.py`).
@@ -440,16 +692,27 @@ do arquivo) contra um arquivo SQLite dedicado:
   removendo `outreach_messages` sem afetar `opportunities`/`activities`/
   `contacts` das migrations anteriores.
 
-**Validação: VALIDADO REALMENTE, mas contra SQLite, não PostgreSQL** — a
-lógica de cada `downgrade()` (que tabelas/colunas/índices remover, em que
-ordem) é a mesma independentemente do dialeto, mas o comportamento do
-dialeto SQLite para DDL (`Will assume non-transactional DDL`, visível no
-log do Alembic) difere de PostgreSQL (que tem DDL transacional real); um
-`downgrade()` que falhasse a meio caminho se comportaria diferente nos
-dois. Rodar esta mesma suíte contra PostgreSQL real (via
-`REAL_POSTGRES_URL`, mesmo padrão de `tests/infra/`) é a extensão natural
-quando essa infraestrutura existir — não implementada agora para não medir
-uma coisa e reportar como se fosse outra.
+**Validação automatizada (`tests/test_migrations_roundtrip.py`): VALIDADO
+REALMENTE, mas contra SQLite, não PostgreSQL** — a lógica de cada
+`downgrade()` (que tabelas/colunas/índices remover, em que ordem) é a
+mesma independentemente do dialeto, mas o comportamento do dialeto SQLite
+para DDL (`Will assume non-transactional DDL`, visível no log do Alembic)
+difere de PostgreSQL (que tem DDL transacional real); um `downgrade()` que
+falhasse a meio caminho se comportaria diferente nos dois.
+
+**Validação manual contra PostgreSQL real (Prompt 14): VALIDADO** — o
+mesmo round-trip (`upgrade head` → `downgrade base` → `upgrade head`,
+agora com as 13 migrations até `0013_prototype_versioning`) foi executado
+manualmente via CLI do Alembic contra PostgreSQL 18 nativo nesta sessão:
+as 13 migrations aplicaram, os 13 `downgrade()` reverteram em cadeia
+deixando só `alembic_version`, e o `upgrade head` seguinte recriou
+exatamente as mesmas 24 tabelas (comparação linha a linha, sem diferença).
+Isto fecha a lacuna real (o comportamento do dialeto PostgreSQL foi
+observado, não só o de SQLite) mas continua sendo uma verificação manual
+desta sessão, não um teste automatizado novo — `tests/test_migrations_roundtrip.py`
+em si não foi alterado para também rodar contra `REAL_POSTGRES_URL`;
+escrever essa versão automatizada (mesmo padrão de `tests/infra/`) segue
+como extensão natural para quando fizer sentido.
 
 ### Backup + Restore: prova de conceito real
 
