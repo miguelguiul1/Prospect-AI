@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import { getPrototypeVersion } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -61,7 +61,22 @@ export default async function PrototypeVersionDetailPage({
             </p>
           </div>
         </div>
-        <RestoreVersionButton prototypeId={prototypeId} versionId={version.id} />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            render={
+              <a
+                href={`/api/prototypes/${prototypeId}/versions/${version.id}/export`}
+                download
+                aria-label={`Exportar versão ${version.versionNumber} como .zip estático`}
+              />
+            }
+          >
+            <Download className="size-4" />
+            Exportar
+          </Button>
+          <RestoreVersionButton prototypeId={prototypeId} versionId={version.id} />
+        </div>
       </div>
 
       <div className="rounded-xl border border-border p-4">

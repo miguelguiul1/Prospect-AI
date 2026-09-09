@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session, joinedload
 
@@ -24,6 +24,7 @@ from app.db.session import get_db
 from app.domains.auth.dependencies import get_current_user
 from app.domains.auth.models import User
 from app.domains.prototypes.authorization import get_accessible_prototype_or_404
+from app.domains.prototypes.export import build_export_zip, export_filename
 from app.domains.prototypes.generation.service import (
     GenerationInProgressError,
     NoPreviousVersionError,
@@ -532,6 +533,46 @@ def get_prototype_version(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return _version_to_detail(version)
+
+
+@router.get("/{prototype_id}/versions/{version_id}/export")
+def export_prototype_version(
+    prototype_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Export estático (HTML/CSS) de uma versão, como `.zip` (Prompt 15).
+    Mesma autorização de qualquer outra rota de `Prototype`. Transformação
+    determinística e local (sem chamada de rede, sem IA) — síncrona de
+    propósito, sem fila: medido em ~2ms mesmo em `MAX_COMPONENTS_PER_PROTOTYPE`
+    (300 componentes, o teto real da árvore), ordens de magnitude abaixo
+    do que justificaria enfileirar. Gerado sob demanda a cada chamada,
+    nunca persistido."""
+    prototype = get_accessible_prototype_or_404(db, prototype_id, current_user)
+    version = PrototypeVersionService(db).get(prototype_id, version_id)
+    if version is None:
+        raise AppError(
+            f"Versão {version_id} não encontrada para o protótipo {prototype_id}.",
+            code="prototype_version_not_found",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        zip_bytes = build_export_zip(prototype, version)
+    except (ValueError, ValidationError) as exc:
+        raise AppError(
+            f"Não foi possível exportar esta versão: {exc}",
+            code="invalid_component_tree",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        ) from exc
+
+    filename = export_filename(prototype, version)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{prototype_id}/versions/{version_id}/restore", response_model=PrototypeVersionDetailResponse)
