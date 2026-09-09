@@ -59,7 +59,33 @@ class TestRateLimiterAgainstRealRedis:
     """Prova, contra Redis de verdade, o que a suíte principal só consegue
     provar no caminho inverso (Redis ausente → fail-open, já testado
     extensivamente em F7/F7.5). Aqui: Redis PRESENTE → o limite realmente
-    bloqueia — isto nunca foi executado com sucesso antes da Fase 8."""
+    bloqueia — isto nunca foi executado com sucesso antes da Fase 8.
+
+    `check_and_increment` (código de produção) obtém sua conexão Redis via
+    `app.jobs.queue.get_redis_connection()`, que lê `Settings.redis_url` —
+    ou seja, o `REDIS_URL` que `tests/conftest.py` fixa deliberadamente
+    para uma porta morta (`redis://localhost:6399/0`) durante TODA a
+    sessão de pytest, para exercitar o caminho de indisponibilidade em
+    outros testes. Sem este fixture, toda esta classe bateria nessa porta
+    morta em vez de `REAL_REDIS_URL` — o fixture aponta temporariamente o
+    `REDIS_URL` do processo para o Redis real e limpa os dois
+    `lru_cache` (`get_settings`, `get_redis_connection`) para que a
+    mudança tenha efeito; `monkeypatch` desfaz o `os.environ` sozinho ao
+    final de cada teste, então o `cache_clear()` final restaura o cliente
+    apontado para a porta morta de novo, sem vazar para os testes
+    seguintes."""
+
+    @pytest.fixture(autouse=True)
+    def _app_client_targets_real_redis(self, monkeypatch: pytest.MonkeyPatch):
+        from app.core.config import get_settings
+        from app.jobs.queue import get_redis_connection
+
+        monkeypatch.setenv("REDIS_URL", REAL_REDIS_URL)
+        get_settings.cache_clear()
+        get_redis_connection.cache_clear()
+        yield
+        get_settings.cache_clear()
+        get_redis_connection.cache_clear()
 
     def test_allows_requests_within_the_limit(self, redis_conn) -> None:
         key = "test:f8:rate:within-limit"

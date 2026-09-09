@@ -66,7 +66,19 @@ jobs:
 
       - name: Run test suite (SQLite — mesmo padrão de tests/conftest.py)
         working-directory: backend
-        run: pytest -q
+        # `--ignore=tests/infra`: sem isto, `pytest -q` (testpaths = ["tests"]
+        # em pyproject.toml) coleta TODA a árvore tests/, tests/infra/
+        # incluído — e os dois arquivos daquele diretório têm seus próprios
+        # defaults (REAL_POSTGRES_URL/REAL_REDIS_URL) já apontando para os
+        # serviços deste job, disponíveis desde antes do primeiro step. Sem
+        # este --ignore, tests/infra roda aqui, ANTES do step "Apply
+        # migrations" abaixo sequer existir ter rodado — batendo num banco
+        # real mas ainda sem nenhuma tabela, e num Redis real que expõe o
+        # bug de fixture já documentado em tests/infra/test_real_redis.py.
+        # Achado real (não hipotético): as 5 execuções de CI deste projeto
+        # falharam exatamente assim, sempre neste step, desde o primeiro
+        # push (ver docs/production-readiness.md).
+        run: pytest -q --ignore=tests/infra
 
       - name: Apply migrations against real PostgreSQL
         working-directory: backend
