@@ -149,9 +149,21 @@ reaproveitando a mesma imagem do backend com um `command` diferente.
   uma busca nova foi de `pending` a `failed` (Google Places rejeitando a
   chave placeholder do `.env` — esperado, não é o achado) em ~1 segundo,
   `started_at`/`finished_at` preenchidos. 2 testes novos
-  (`tests/jobs/test_worker_entrypoint.py`, isolados via subprocesso — a
-  classe é decidida uma vez, no import do módulo) travam a seleção por
-  plataforma contra regressão.
+  (`tests/jobs/test_worker_entrypoint.py`) travam a seleção por
+  plataforma contra regressão — chamando `_select_worker_class` (função
+  pura, extraída de `app/worker.py` de propósito) diretamente com cada
+  string de plataforma, nunca forjando `sys.platform` antes de importar
+  `rq`. A primeira versão fazia isso via subprocesso com `sys.platform`
+  sobrescrito antes do import — passou nesta máquina (Windows), mas
+  quebrou o CI real (Linux) com `ModuleNotFoundError: No module named
+  '_overlapped'`: `sys.platform` é só uma string que o nosso código lê,
+  mas `asyncio` da biblioteca padrão decide `windows_events` vs
+  `unix_events` pelo SO real por outro caminho, e `_overlapped` (módulo
+  compilado) só existe numa build real do Python para Windows — forjar a
+  plataforma engana `app.worker`, não engana `asyncio`. Achado real do
+  próprio CI desta correção, não hipotético — mais uma instância do tema
+  recorrente desta sessão (Windows local vs. Linux real do CI se
+  comportando diferente de formas que só a execução real expõe).
 
 ## Rate Limiting endurecido + Security Hardening (F8.3)
 

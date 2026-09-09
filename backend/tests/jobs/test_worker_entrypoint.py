@@ -9,40 +9,31 @@ job que tentou executar. `app.worker` agora seleciona `rq.SimpleWorker`
 no Windows, preservando o isolamento por processo de `Worker` em produção
 real (Linux).
 
-Via subprocesso, não monkeypatch de `sys.platform` no processo do pytest:
-`_WorkerClass` é calculado uma vez, no import do módulo — testar as duas
-plataformas no mesmo processo exigiria `importlib.reload` com o risco real
-de vazar o estado de um teste para o outro (mesmo raciocínio de isolamento
-de `tests/test_migrations_roundtrip.py`)."""
+**Por que isto testa `_select_worker_class` diretamente, não um
+subprocesso com `sys.platform` forjado**: a primeira versão deste teste
+usava subprocesso + `sys.platform` sobrescrito antes do `import rq` —
+passou nesta máquina (Windows), mas quebrou no CI (Linux) com
+`ModuleNotFoundError: No module named '_overlapped'`. Causa raiz (achado
+real do CI, não hipotético): `sys.platform` é só uma string que o NOSSO
+código lê — `asyncio` da biblioteca padrão decide `windows_events` vs
+`unix_events` pelo SO real por outro caminho, e `_overlapped` (um módulo
+compilado) só existe numa build real do Python para Windows. Forjar
+`sys.platform` engana `app.worker`, mas não engana `asyncio` nem
+qualquer outra dependência com detecção própria de plataforma — importar
+`rq` (que acaba puxando `asyncio`) sob uma plataforma forjada é
+inerentemente não-portável entre SOs reais diferentes. `rq` é importado
+uma única vez aqui, no topo do arquivo, contra o SO real de verdade;
+`_select_worker_class` só recebe strings e devolve uma classe já
+importada — nunca reimporta nada."""
 from __future__ import annotations
 
-import subprocess
-import sys
-from pathlib import Path
-
-BACKEND_DIR = Path(__file__).resolve().parents[2]
-
-
-def _worker_class_on(platform: str) -> str:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            f"import sys; sys.platform = {platform!r}; import app.worker; "
-            "print(app.worker._WorkerClass.__name__)",
-        ],
-        cwd=str(BACKEND_DIR),
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    assert result.returncode == 0, f"falhou para platform={platform!r}:\n{result.stdout}\n{result.stderr}"
-    return result.stdout.strip()
+from app.worker import Worker, SimpleWorker, _select_worker_class
 
 
 class TestWorkerClassSelection:
-    def test_uses_simpleworker_on_windows_where_os_fork_does_not_exist(self) -> None:
-        assert _worker_class_on("win32") == "SimpleWorker"
+    def test_selects_simpleworker_for_windows_where_os_fork_does_not_exist(self) -> None:
+        assert _select_worker_class("win32") is SimpleWorker
 
-    def test_uses_worker_with_process_isolation_elsewhere(self) -> None:
-        assert _worker_class_on("linux") == "Worker"
+    def test_selects_worker_with_process_isolation_elsewhere(self) -> None:
+        assert _select_worker_class("linux") is Worker
+        assert _select_worker_class("darwin") is Worker
