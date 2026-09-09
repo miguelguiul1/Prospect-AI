@@ -23,16 +23,34 @@ SIGINT/SIGTERM nativamente — um primeiro sinal (Ctrl+C) pede para o job
 atual terminar antes de sair (warm shutdown); um segundo sinal força saída
 imediata (cold shutdown). Nenhum tratamento de sinal próprio é adicionado
 aqui, para não sobrescrever esse comportamento já correto da biblioteca.
+
+**`Worker` no Windows (achado real, não hipotético)**: a `rq.Worker`
+padrão isola cada job num processo filho via `os.fork()` — que não existe
+no Windows (`AttributeError: module 'os' has no attribute 'fork'`,
+observado ao rodar este módulo pela primeira vez contra Redis real nesta
+sessão; nenhuma sessão anterior tinha Redis real disponível pra expor
+isso). Sem fork, o worker inteiro morre ao pegar o PRIMEIRO job — nunca
+foi um problema hipotético de compatibilidade, é o comportamento real
+observado. `rq.SimpleWorker` executa o job no mesmo processo, sem fork
+(mesma classe que `tests/infra/test_real_worker.py` já usa, pelo mesmo
+motivo). Usar `SimpleWorker` só no Windows preserva o isolamento por
+processo (um job que trava/estoura memória não derruba o worker inteiro)
+em produção real (Linux), onde `os.fork()` existe e funciona.
 """
 from __future__ import annotations
 
 import sys
 
-from rq import Worker
+from rq import SimpleWorker, Worker
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import get_redis_connection
+
+# Ver docstring do módulo — `os.fork()` não existe no Windows, então a
+# `Worker` padrão (baseada em fork) crasha ao executar o primeiro job
+# nessa plataforma.
+_WorkerClass = SimpleWorker if sys.platform == "win32" else Worker
 
 # Sincronizado manualmente com `QUEUE_NAME` em cada
 # `app/domains/{discovery,audit,briefing,prototypes}/jobs.py` — são as
@@ -55,7 +73,7 @@ def main(queue_names: list[str] | None = None) -> None:
 
     logger.info("worker_starting", queues=queues, app_env=settings.app_env)
 
-    worker = Worker(queues, connection=connection)
+    worker = _WorkerClass(queues, connection=connection)
     worker.work(with_scheduler=False)
 
 
