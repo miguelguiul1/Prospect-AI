@@ -45,16 +45,22 @@ if errorlevel 1 (
 )
 
 echo.
-echo Abrindo backend e frontend em janelas separadas...
+echo Abrindo backend, worker e frontend em janelas separadas...
 echo.
 
 REM "conhost.exe" antes do "cmd" forca uma janela de console classica de
 REM verdade, mesmo em maquinas (como esta) onde o Windows Terminal esta
-REM configurado como terminal padrao do Windows 11 -- sem isso, os dois
-REM "start" abririam como duas ABAS de uma unica janela do Windows
-REM Terminal, em vez de duas janelas separadas de verdade (testado nesta
-REM mesma maquina antes de decidir por esta abordagem).
+REM configurado como terminal padrao do Windows 11 -- sem isso, os
+REM "start" abririam como ABAS de uma unica janela do Windows Terminal,
+REM em vez de janelas separadas de verdade (testado nesta mesma maquina
+REM antes de decidir por esta abordagem).
 start "Prospect AI - Backend" /D "%ROOT%\backend" conhost.exe cmd /k "call .venv\Scripts\activate.bat && uvicorn app.main:app --reload"
+
+REM Worker RQ (consome discovery/audit/briefing/prototype_generation).
+REM Sem isto, um job "enfileirado" (Redis real disponivel, ver
+REM app/jobs/queue.py) fica PENDING para sempre -- achado real desta
+REM sessao, nao hipotetico: uma busca de Discovery ficou presa assim.
+start "Prospect AI - Worker" /D "%ROOT%\backend" conhost.exe cmd /k "call .venv\Scripts\activate.bat && python -m app.worker"
 
 start "Prospect AI - Frontend" /D "%ROOT%\frontend" conhost.exe cmd /k "npm run dev"
 
@@ -69,11 +75,12 @@ echo   Prospect AI esta rodando.
 echo.
 echo   Backend:  http://localhost:8000
 echo   Frontend: http://localhost:3000
+echo   Worker:   consumindo discovery/audit/briefing/prototype_generation
 echo.
-echo   Para DESLIGAR tudo, feche as duas janelas de
-echo   terminal que foram abertas ("Prospect AI - Backend"
-echo   e "Prospect AI - Frontend"). Fechar esta janela
-echo   nao desliga nada.
+echo   Para DESLIGAR tudo, feche as TRES janelas de
+echo   terminal que foram abertas ("Prospect AI - Backend",
+echo   "Prospect AI - Worker" e "Prospect AI - Frontend").
+echo   Fechar esta janela nao desliga nada.
 echo ============================================
 echo.
 pause
