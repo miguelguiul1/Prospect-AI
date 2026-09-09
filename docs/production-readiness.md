@@ -129,6 +129,29 @@ reaproveitando a mesma imagem do backend com um `command` diferente.
   suba `python -m app.worker` como processo separado e observe-o consumir
   a fila — a lacuna que resta é só essa (o mecanismo enqueue→worker→execução
   em si já está provado real).
+- **Correção (sessão do launcher local, depois do Prompt 15)**: a validação
+  acima usava `SimpleWorker` — o próprio entrypoint de produção
+  (`python -m app.worker`, que usa `rq.Worker`, não `SimpleWorker`) só foi
+  executado pela primeira vez de verdade nesta sessão seguinte, ao montar
+  `iniciar-prospect-ai.bat`. Resultado real: **crashou no primeiro job**
+  (`AttributeError: module 'os' has no attribute 'fork'`) — `rq.Worker`
+  isola cada job via `os.fork()`, inexistente no Windows. Ou seja, a frase
+  acima ("o mecanismo... já está provado real") estava certa só para o
+  RQ em si via `SimpleWorker`, não para o entrypoint real que
+  `docker-compose.yml`/o launcher local de fato invocam. Corrigido:
+  `app/worker.py` agora seleciona `SimpleWorker` só em `sys.platform ==
+  "win32"`, preservando `Worker` (isolamento por processo — um job que
+  trava/estoura memória não derruba o worker inteiro) em produção real
+  (Linux, onde `os.fork()` funciona). Validado de ponta a ponta com o
+  entrypoint real, não um teste isolado: uma busca de Discovery
+  enfileirada com Redis real e nenhum worker rodando ficou presa em
+  `PENDING` (reprodução do bug ao vivo); com o worker corrigido no ar,
+  uma busca nova foi de `pending` a `failed` (Google Places rejeitando a
+  chave placeholder do `.env` — esperado, não é o achado) em ~1 segundo,
+  `started_at`/`finished_at` preenchidos. 2 testes novos
+  (`tests/jobs/test_worker_entrypoint.py`, isolados via subprocesso — a
+  classe é decidida uma vez, no import do módulo) travam a seleção por
+  plataforma contra regressão.
 
 ## Rate Limiting endurecido + Security Hardening (F8.3)
 
@@ -270,7 +293,8 @@ que finalmente teve Postgres/Redis reais e o que mudou:
 |---|---|---|
 | PostgreSQL | **VALIDADO AO VIVO (Prompt 14)** | `tests/infra/test_real_postgres.py` (6 testes: conectividade, versão, todas as tabelas F0-F7, índice parcial real, race condition de stage-change, concorrência de criação de Opportunity) — rodou de verdade contra PostgreSQL 18 nativo (Windows) e passou. Segue validado estruturalmente em CI contra `postgres:16-alpine`, mas essa execução de CI específica continua nunca observada (nenhum push foi feito) |
 | Redis | **VALIDADO AO VIVO (Prompt 14)** | `tests/infra/test_real_redis.py` (5 testes: rate limiter real) + `tests/infra/test_real_worker.py` (worker RQ contra Redis real, não `fakeredis`) — rodaram contra Redis nativo (Memurai Developer) e passaram. Mesma ressalva de CI acima: validado estruturalmente, execução do workflow em si não observada |
-| RQ (worker) | **VALIDADO COM MOCK** (fakeredis, F8.2) **+ VALIDADO AO VIVO (Prompt 14)**, contra Redis real | `tests/jobs/test_worker_integration.py` + `tests/infra/test_real_worker.py` |
+| RQ (worker, mecanismo via `SimpleWorker`) | **VALIDADO COM MOCK** (fakeredis, F8.2) **+ VALIDADO AO VIVO (Prompt 14)**, contra Redis real | `tests/jobs/test_worker_integration.py` + `tests/infra/test_real_worker.py` |
+| RQ (entrypoint real, `python -m app.worker`) | **VALIDADO AO VIVO — corrigido depois de crashar (sessão do launcher local)**: `rq.Worker` usa `os.fork()`, inexistente no Windows; crashou no primeiro job real. `SimpleWorker` no Windows (mesma classe da linha acima) corrige; validado com uma busca de Discovery real indo `pending`→`failed` via o entrypoint de produção, não um teste isolado | `app/worker.py`, `tests/jobs/test_worker_entrypoint.py`, ver seção "RQ Worker (F8.2)" acima |
 | Anthropic | **NOT VALIDATED — credencial ausente do ambiente do processo, deliberado** | `tests/infra/test_real_anthropic.py`: pula automaticamente sem `ANTHROPIC_API_KEY` no ambiente do processo. `backend/.env` tem uma chave real (Prompt 11), mas o Prompt 14 delimitou o escopo a banco/fila/CI, não ao Generation Engine — a chave não foi exportada para o processo de teste de propósito, nenhuma chamada real foi feita |
 | PostgreSQL — concorrência (Opportunity, stage-change) | **VALIDADO AO VIVO (Prompt 14)**, contra Postgres real | Mesmo arquivo acima |
 | Redis — restart/reconexão sob operação | **NOT VALIDATED** | Exigiria controlar o ciclo de vida de um processo Redis real (matar/reiniciar) durante uma operação em andamento — ainda não exercitado nesta sessão nem em nenhuma anterior |
@@ -942,6 +966,19 @@ não cobertos). Os piores pontos identificados e o que foi feito:
   diretamente sem um subprocesso com timeout, de baixo valor real: o
   mesmo `Worker`/`.work()` já é exercitado (com `burst=True`, que não
   bloqueia) em `tests/jobs/test_worker_integration.py`.
+
+  **Correção (sessão do launcher local, depois do Prompt 15) — esta
+  afirmação estava errada, não só otimista**: `test_worker_integration.py`
+  usa `SimpleWorker`, não `Worker` (`from rq import Queue, SimpleWorker`,
+  confirmado por leitura direta do arquivo) — a classe real que
+  `app/worker.py` instancia nunca foi exercitada por NENHUM teste do
+  projeto, em nenhuma fase, até este `main()` ser executado de verdade
+  pela primeira vez nesta sessão seguinte. O resultado real: crashou no
+  primeiro job (`os.fork()` não existe no Windows) — o "de baixo valor
+  real" da avaliação original não se sustentou; era exatamente o caminho
+  que faltava exercitar. Ver a seção "RQ Worker (F8.2)" acima para a
+  correção aplicada (`SimpleWorker` seletivo por plataforma) e a prova ao
+  vivo com uma busca de Discovery real.
 
 **Frontend**: `@vitest/coverage-v8` (novo, dev-only) rodado por completo
 pela primeira vez — 86.7% statements / 76.7% branches sobre os arquivos
