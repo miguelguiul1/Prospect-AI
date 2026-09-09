@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/layout/app-shell";
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
     "Dashboard de prospecção comercial: descoberta, auditoria digital e priorização de oportunidades.",
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
   // `getCurrentUserSafe` nunca lança — em `/login`/`/register` (sem cookie
   // de sessão ainda) simplesmente resolve `null`, e o AppShell renderiza um
   // layout sem a barra lateral autenticada nessas rotas (ver app-shell.tsx).
